@@ -1,0 +1,28 @@
+{
+  "name": "@skynote/editor",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "SkyNote ready-to-use editor: engine and basic plugins assembled in one class, rendering backend pluggable",
+  "license": "Apache-2.0",
+  "sideEffects": false,
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "test": "vitest run --dir tests",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "@skynote/core": "workspace:*",
+    "@skynote/plugins-basic": "workspace:*"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
