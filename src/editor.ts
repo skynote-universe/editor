@@ -5,7 +5,7 @@
  * 设计考量 (Why):
  * 1. 一行接入：`new SkyNoteEditor({ renderer: adapter })` 后在容器就绪时 mount(container)，不必了解引擎与插件的装配细节；
  *    需要精细装配时仍可直接使用 core / plugins-basic 与各渲染包。
- * 2. 与渲染引擎无关：适配器成对提供渲染器与文本测量器 (ADR-105)，本包不依赖任何渲染引擎；
+ * 2. 与渲染引擎无关：适配器成对提供渲染器与字体测量器 (ADR-105)，本包不依赖任何渲染引擎；
  *    容器类型随适配器推导 (Leafer 适配器为 HTMLElement)。
  * 3. 与界面框架无关：不依赖 Vue / React；界面需要的状态 (缩放比例、选区等) 直接订阅 engine.session。
  * 4. 生命周期分离：引擎随编辑器创建，可在挂载前载入文档与安装插件；渲染器只在 mount 与 unmount 之间存在，
@@ -26,11 +26,12 @@ import {
   EditingShortcutsPlugin,
   SelectionOutlinePlugin,
   SelectionPlugin,
+  TextEditPlugin,
   TransformPlugin,
   ViewportNavigationPlugin
 } from '@skynote/plugins-basic';
 
-export interface SkyNoteEditorOptions<TContainer> extends Omit<SkyNoteEngineOptions, 'textMeasurer'> {
+export interface SkyNoteEditorOptions<TContainer> extends Omit<SkyNoteEngineOptions, 'fonts'> {
   /** 渲染适配器 (如 @skynote/renderer-leafer 的 LeaferAdapter) */
   renderer: RenderAdapter<TContainer>;
   /** 在基础插件之后额外安装的插件 (同 id 的插件会替换已安装者) */
@@ -44,19 +45,22 @@ export type ViewportInsertRequest = {
 
 export class SkyNoteEditor<TContainer = unknown> {
   readonly engine: SkyNoteEngine;
+  /** 画布内文字编辑：界面据此显示格式工具栏并设置选区样式 */
+  readonly textEditor = new TextEditPlugin();
   private readonly adapter: RenderAdapter<TContainer>;
   private renderer: CanvasRenderer | null = null;
 
   constructor(options: SkyNoteEditorOptions<TContainer>) {
     const { renderer, plugins = [], ...engineOptions } = options;
     this.adapter = renderer;
-    this.engine = new SkyNoteEngine({ ...engineOptions, textMeasurer: renderer.textMeasurer })
+    this.engine = new SkyNoteEngine({ ...engineOptions, fonts: renderer.fonts })
       .use(new BasicNodesPlugin())
       .use(new ViewportNavigationPlugin())
       .use(new SelectionPlugin())
       .use(new SelectionOutlinePlugin())
       .use(new EditingShortcutsPlugin())
-      .use(new TransformPlugin());
+      .use(new TransformPlugin())
+      .use(this.textEditor);
     for (const plugin of plugins) this.engine.use(plugin);
   }
 

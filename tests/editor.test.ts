@@ -12,7 +12,7 @@ import {
   type RenderAdapter,
   type SkyNoteEngine,
   type SkyNotePlugin,
-  type TextMeasurer
+  type FontMeasurer
 } from '@skynote/core';
 import { SELECTION_PLUGIN_ID } from '@skynote/plugins-basic';
 import { SkyNoteEditor } from '../src';
@@ -25,7 +25,7 @@ interface FakeContainer {
 
 /** 替身适配器：挂载时像真实渲染器一样挂宿主、上报视口尺寸，并记录生命周期 */
 class FakeAdapter implements RenderAdapter<FakeContainer> {
-  readonly textMeasurer: TextMeasurer = { measure: () => ({ width: 0, height: 0 }) };
+  readonly fonts: FontMeasurer = { measureWidth: () => 0 };
   readonly mounted: FakeContainer[] = [];
   destroyed = 0;
 
@@ -43,7 +43,7 @@ class FakeAdapter implements RenderAdapter<FakeContainer> {
 }
 
 describe('SkyNoteEditor', () => {
-  it('创建即装好基础节点与交互插件并注入适配器的文本测量器，额外插件装在其后', () => {
+  it('创建即装好基础节点与交互插件并注入适配器的字体测量器，额外插件装在其后', () => {
     let installed = false;
     const extra: SkyNotePlugin = {
       id: 'extra',
