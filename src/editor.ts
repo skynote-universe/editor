@@ -26,6 +26,7 @@ import {
   EditingShortcutsPlugin,
   SelectionOutlinePlugin,
   SelectionPlugin,
+  TransformPlugin,
   ViewportNavigationPlugin
 } from '@skynote/plugins-basic';
 
@@ -54,7 +55,8 @@ export class SkyNoteEditor<TContainer = unknown> {
       .use(new ViewportNavigationPlugin())
       .use(new SelectionPlugin())
       .use(new SelectionOutlinePlugin())
-      .use(new EditingShortcutsPlugin());
+      .use(new EditingShortcutsPlugin())
+      .use(new TransformPlugin());
     for (const plugin of plugins) this.engine.use(plugin);
   }
 
