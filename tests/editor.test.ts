@@ -107,6 +107,49 @@ describe('SkyNoteEditor', () => {
 
     engine.documentStore.undo();
     expect(engine.documentStore.getNode(id)).toBeUndefined();
+
+    // 在指定世界坐标处插入节点
+    const atId = editor.insertNodeAt({ nodeType: 'sticky' }, { x: 250, y: 180 })!;
+    const atNode = engine.documentStore.getNode(atId)!;
+    expect(atNode.x + atNode.width / 2).toBe(250);
+    expect(atNode.y + atNode.height / 2).toBe(180);
+    expect([...engine.session.selectedNodeIds]).toEqual([atId]);
+
+    // 门面坐标与视口换算
+    const worldP = editor.screenToWorld({ x: 500, y: 400 });
+    const screenP = editor.worldToScreen(worldP);
+    expect(screenP.x).toBeCloseTo(500);
+    expect(screenP.y).toBeCloseTo(400);
+
+    // 门面图元查询与修改
+    expect(editor.nodeCount).toBe(1);
+    expect(editor.getNode(atId)?.id).toBe(atId);
+    expect(editor.getNodes([atId]).length).toBe(1);
+
+    editor.updateNodes([atId], { locked: true });
+    expect(editor.getNode(atId)?.locked).toBe(true);
+
+    editor.setNodesLocked([atId], false);
+    expect(editor.getNode(atId)?.locked).toBe(false);
+
+    // 门面尺寸、圆角与旋转
+    editor.setNodeSize([atId], { width: 300, height: 200 });
+    expect(editor.getNode(atId)?.width).toBe(300);
+    expect(editor.getNode(atId)?.height).toBe(200);
+
+    editor.setNodeRadius([atId], 16);
+    expect(editor.getNode(atId)?.style?.radius).toBe(16);
+
+    editor.setNodeRotation([atId], 45);
+    expect(editor.getNode(atId)?.rotation).toBe(45);
+
+    editor.rotateNodesBy([atId], 90);
+    expect(editor.getNode(atId)?.rotation).toBe(135);
+
+    // 颜色解析与历史记录状态
+    expect(editor.canUndo).toBe(true);
+    expect(editor.resolveColor('canvas-background')).toBeDefined();
+
     editor.destroy();
   });
 });
