@@ -15,14 +15,18 @@
 import {
   SkyNoteEngine,
   compactCornerRadius,
+  clonePlainData,
   computeWorldFrame,
   expandCornerRadius,
   isAspectLocked,
+  parseCanvasDocument,
   resolveNodeStyle,
   resolveThemeColor,
   screenToWorld,
   unionBounds,
   worldToScreen,
+  type CanvasDocument,
+  type CanvasPatch,
   type CanvasRenderer,
   type CanvasTheme,
   type CanvasThemeConfig,
@@ -35,6 +39,7 @@ import {
   type NodeEntity,
   type NodeStyle,
   type NodeTransform,
+  type ParseResult,
   type Point,
   type RadiusCorner,
   type RectBounds,
@@ -45,6 +50,7 @@ import {
 } from '@skynote/core';
 import {
   BasicNodesPlugin,
+  ClipboardPlugin,
   EditingShortcutsPlugin,
   SelectionOutlinePlugin,
   SelectionPlugin,
@@ -96,6 +102,7 @@ export class SkyNoteEditor<TContainer = unknown> {
       .use(new SelectionOutlinePlugin())
       .use(new EditingShortcutsPlugin())
       .use(new TransformPlugin())
+      .use(new ClipboardPlugin())
       .use(this.textEditor);
     for (const plugin of plugins) this.engine.use(plugin);
   }
@@ -154,6 +161,14 @@ export class SkyNoteEditor<TContainer = unknown> {
     return () => {
       this.engine.inputScopes.popScope(scope.id);
     };
+  }
+
+  /**
+   * 每次提交 (含撤销、重做、导入) 的正向补丁，按提交顺序通知；本地持久化据此追加写入日志，
+   * 从快照按序重放即得到当前文档
+   */
+  onCommit(listener: (patches: readonly CanvasPatch[]) => void): () => void {
+    return this.engine.documentStore.subscribe((_view, record) => listener(record.patches));
   }
 
   /** 撤销 / 重做可用状态变化 */
@@ -389,6 +404,30 @@ export class SkyNoteEditor<TContainer = unknown> {
   /** 绕选中节点整体中心增量旋转 (如顺时针 90°)，与拖动旋转控制柄结果一致 */
   rotateNodesBy(nodeIds: readonly string[], degrees: number, options?: EditOptions): void {
     this.engine.documentStore.rotateNodes(nodeIds, degrees, options);
+  }
+
+  // ==================== 文档导出、导入与恢复 ====================
+
+  /** 当前文档的完整副本 (可直接 JSON 序列化) */
+  exportDocument(): CanvasDocument {
+    return clonePlainData(this.engine.documentStore.getView()) as CanvasDocument;
+  }
+
+  /**
+   * 导入外部文档 (文件)：经白名单校验后替换当前内容，撤销一步即回到原内容
+   * @returns 校验失败时给出出错位置，当前内容不变
+   */
+  importDocument(value: unknown): ParseResult<void> {
+    const parsed = parseCanvasDocument(value);
+    if (!parsed.ok) return parsed;
+    this.engine.documentStore.replaceContent(parsed.value.content, { label: '导入文档' });
+    return { ok: true, value: undefined };
+  }
+
+  /** 从本地存储恢复文档 (须先经 parseCanvasDocument 校验)：不进撤销栈，并清空撤销历史 */
+  restoreDocument(doc: CanvasDocument): void {
+    this.engine.documentStore.replaceContent(doc.content, { undoable: false });
+    this.engine.documentStore.clearHistory();
   }
 
   // ==================== 撤销与重做 ====================

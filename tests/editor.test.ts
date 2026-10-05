@@ -165,4 +165,31 @@ describe('SkyNoteEditor', () => {
 
     editor.destroy();
   });
+
+  it('导出、导入与恢复：导入经校验替换内容且可撤销，非法内容不改动；恢复不进撤销栈；提交按序通知补丁', () => {
+    const editor = new SkyNoteEditor({ renderer: new FakeAdapter() });
+    const committed: unknown[] = [];
+    editor.onCommit((patches) => committed.push(patches));
+    const id = editor.createNode({ nodeType: 'sticky', x: 0, y: 0 })!;
+    expect(committed).toHaveLength(1);
+
+    const exported = JSON.parse(JSON.stringify(editor.exportDocument()));
+    editor.deleteNodes([id]);
+    expect(editor.importDocument({ broken: true }).ok).toBe(false);
+    expect(editor.nodeCount).toBe(0);
+
+    expect(editor.importDocument(exported)).toEqual({ ok: true, value: undefined });
+    expect(editor.getNode(id)).toBeDefined();
+    editor.undo();
+    expect(editor.getNode(id)).toBeUndefined();
+
+    editor.restoreDocument(exported);
+    expect(editor.getNode(id)).toBeDefined();
+    expect(editor.canUndo).toBe(false);
+
+    // 剪贴板插件已装配：选中节点即可复制
+    editor.select([id]);
+    expect(editor.engine.clipboard.copy()).not.toBeNull();
+    editor.destroy();
+  });
 });

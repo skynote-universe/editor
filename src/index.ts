@@ -5,8 +5,17 @@
 
 export * from './editor';
 
-export { CANVAS_PALETTE, expandCornerRadius, generateId, mixHexColors } from '@skynote/core';
+export {
+  CANVAS_PALETTE,
+  applyPatches,
+  expandCornerRadius,
+  generateId,
+  mixHexColors,
+  parseCanvasDocument
+} from '@skynote/core';
 export type {
+  CanvasDocument,
+  CanvasPatch,
   CanvasTheme,
   CanvasThemeConfig,
   CanvasThemeSeed,
@@ -18,6 +27,7 @@ export type {
   LayerMove,
   NodeEntity,
   NodeStyle,
+  ParseResult,
   Point,
   RadiusCorner,
   RectBounds,
