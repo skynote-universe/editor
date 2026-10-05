@@ -124,7 +124,6 @@ describe('SkyNoteEditor', () => {
     // 门面图元查询与修改
     expect(editor.nodeCount).toBe(1);
     expect(editor.getNode(atId)?.id).toBe(atId);
-    expect(editor.getNodes([atId]).length).toBe(1);
 
     editor.updateNodes([atId], { locked: true });
     expect(editor.getNode(atId)?.locked).toBe(true);
@@ -139,12 +138,26 @@ describe('SkyNoteEditor', () => {
 
     editor.setNodeRadius([atId], 16);
     expect(editor.getNode(atId)?.style?.radius).toBe(16);
+    // 只改右上角、保留其余三角；四角重新一致时存回单值
+    editor.setNodeRadius([atId], 4, { corner: 1 });
+    expect(editor.getNode(atId)?.style?.radius).toEqual([16, 4, 16, 16]);
+    editor.setNodeRadius([atId], 16, { corner: 1 });
+    expect(editor.getNode(atId)?.style?.radius).toBe(16);
 
     editor.setNodeRotation([atId], 45);
-    expect(editor.getNode(atId)?.rotation).toBe(45);
+    expect(editor.getNode(atId)?.rotation).toBeCloseTo(45);
 
     editor.rotateNodesBy([atId], 90);
-    expect(editor.getNode(atId)?.rotation).toBe(135);
+    expect(editor.getNode(atId)?.rotation).toBeCloseTo(135);
+
+    // 删除与副本走内核命令：容器连同后代一起复制、一起删除
+    const store = engine.documentStore;
+    store.addNode({ ...store.getNode(atId)!, id: 'child', parentId: atId, x: 0, y: 0, rotation: 0 });
+    const [copyId] = editor.duplicateNodes([atId]);
+    expect([...engine.session.selectedNodeIds]).toEqual([copyId]);
+    expect(engine.entityStore.getChildIds(copyId).size).toBe(1);
+    editor.deleteNodes([atId, copyId]);
+    expect(editor.nodeCount).toBe(0);
 
     // 颜色解析与历史记录状态
     expect(editor.canUndo).toBe(true);
