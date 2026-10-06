@@ -39,6 +39,8 @@ import {
   type EntityRefs,
   type HistoryChangeListener,
   type InputScope,
+  type CursorDefinition,
+  type CursorStyle,
   type LayerMove,
   type NodeCreateOptionsMap,
   type NodeEntity,
@@ -181,6 +183,18 @@ export class SkyNoteEditor<TContainer = unknown> {
   /** 文档变更：变更集按实体归类 (几何、数据、删除等)，界面据此判断是否需要刷新 */
   onDocumentChange(listener: (changes: DocumentChangeSet) => void): () => void {
     return this.engine.documentStore.subscribe((_view, _record, changes) => listener(changes));
+  }
+
+  /**
+   * 注册或覆盖画布光标 (与内置 id 相同即覆盖，如 'default'、'resize')，方便统一风格；返回恢复函数
+   */
+  registerCursor(definition: CursorDefinition): () => void {
+    return this.engine.cursors.register(definition);
+  }
+
+  /** 统一设置整套光标 (含插件注册的) 的配色 */
+  setCursorStyle(style: Partial<CursorStyle>): void {
+    this.engine.cursors.setStyle(style);
   }
 
   /**
