@@ -363,6 +363,12 @@ export class SkyNoteEditor<TContainer = unknown> {
     return node !== undefined && isAspectLocked(node, this.engine.nodeTypes.get(node.nodeType));
   }
 
+  /** 节点绘制时是否采用圆角 (界面据此决定是否提供圆角设置) */
+  supportsCornerRadius(id: string): boolean {
+    const node = this.engine.documentStore.getNode(id);
+    return !!node && !!this.engine.nodeTypes.get(node.nodeType)?.supportsCornerRadius?.(node);
+  }
+
   /** 节点能否适应内容 (界面据此决定是否显示入口) */
   canFitContent(id: string): boolean {
     return this.engine.documentStore.canFitContent(id);
