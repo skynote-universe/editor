@@ -20,6 +20,7 @@ import {
   expandCornerRadius,
   isAspectLocked,
   parseCanvasDocument,
+  resolveConnectorStyle,
   resolveNodeStyle,
   resolveThemeColor,
   screenToWorld,
@@ -30,8 +31,12 @@ import {
   type CanvasRenderer,
   type CanvasTheme,
   type CanvasThemeConfig,
+  type ConnectorEntity,
+  type ConnectorStyle,
   type CreateNodeRequest,
   type DocumentChangeSet,
+  type EntityIds,
+  type EntityRefs,
   type HistoryChangeListener,
   type InputScope,
   type LayerMove,
@@ -51,7 +56,12 @@ import {
 import {
   BasicNodesPlugin,
   ClipboardPlugin,
+  CONNECTOR_TOOL,
+  ConnectorEditPlugin,
+  ConnectorToolPlugin,
   EditingShortcutsPlugin,
+  type ConnectNodeRequest,
+  type ConnectorDropEvent,
   SelectionOutlinePlugin,
   SelectionPlugin,
   TextEditPlugin,
@@ -71,6 +81,12 @@ export type ViewportInsertRequest = {
   [T in keyof NodeCreateOptionsMap]: Omit<CreateNodeRequest<T>, 'x' | 'y' | 'origin' | 'parentId'>;
 }[keyof NodeCreateOptionsMap];
 
+/** 画布工具：选择 (默认) 或连线 */
+export type CanvasTool = 'select' | typeof CONNECTOR_TOOL;
+
+/** 内置线型 (路由器 id) */
+export type ConnectorLineType = 'straight' | 'orthogonal' | 'curved';
+
 /** 修改类方法的公共选项 */
 export interface EditOptions {
   /** 撤销记录名称 */
@@ -89,6 +105,7 @@ export class SkyNoteEditor<TContainer = unknown> {
   readonly engine: SkyNoteEngine;
   /** 画布内文字编辑：界面据此显示格式工具栏并设置选区样式 */
   readonly textEditor = new TextEditPlugin();
+  private readonly connectorTool = new ConnectorToolPlugin();
   private readonly adapter: RenderAdapter<TContainer>;
   private renderer: CanvasRenderer | null = null;
 
@@ -103,6 +120,8 @@ export class SkyNoteEditor<TContainer = unknown> {
       .use(new EditingShortcutsPlugin())
       .use(new TransformPlugin())
       .use(new ClipboardPlugin())
+      .use(this.connectorTool)
+      .use(new ConnectorEditPlugin())
       .use(this.textEditor);
     for (const plugin of plugins) this.engine.use(plugin);
   }
@@ -138,6 +157,18 @@ export class SkyNoteEditor<TContainer = unknown> {
     return this.engine.session.subscribe((change) => {
       if (change.toggledNodeIds.size > 0 || change.toggledConnectorIds.size > 0) listener();
     });
+  }
+
+  /** 当前工具切换 (进入连线工具、画完一条后回到选择等) */
+  onToolChange(listener: () => void): () => void {
+    return this.engine.session.subscribe((change) => {
+      if (change.toolChanged) listener();
+    });
+  }
+
+  /** 连线松手在空白处 (留下自由端)：界面可在该处弹出图形选择，选择后调用 connectNewNode */
+  onConnectorDropOnBlank(listener: (e: ConnectorDropEvent) => void): () => void {
+    return this.connectorTool.onDropOnBlank(listener);
   }
 
   /** 视口平移或缩放 */
@@ -228,20 +259,49 @@ export class SkyNoteEditor<TContainer = unknown> {
     return resolveThemeColor(colorOrToken, this.engine.session.theme) ?? colorOrToken;
   }
 
+  // ==================== 工具 ====================
+
+  get tool(): CanvasTool {
+    return this.engine.session.tool as CanvasTool;
+  }
+
+  /** 连线工具画出的线型 */
+  get connectorToolType(): ConnectorLineType {
+    return this.connectorTool.connectorType as ConnectorLineType;
+  }
+
+  /** 进入连线工具：之后在画布上拖动画出一条该线型的连线，画完回到选择工具 */
+  startConnectorTool(connectorType: ConnectorLineType = this.connectorToolType): void {
+    this.connectorTool.connectorType = connectorType;
+    this.engine.session.setTool(CONNECTOR_TOOL);
+  }
+
+  /** 回到选择工具 (取消正在画的连线) */
+  stopTool(): void {
+    this.engine.session.setTool('select');
+  }
+
   // ==================== 选区与查询 ====================
 
   get selectedNodeIds(): ReadonlySet<string> {
     return this.engine.session.selectedNodeIds;
   }
 
-  /** 选中指定节点 (清空连线选区) */
-  select(nodeIds: readonly string[]): void {
-    this.engine.session.setSelection({ nodeIds, connectorIds: [] });
+  get selectedConnectorIds(): ReadonlySet<string> {
+    return this.engine.session.selectedConnectorIds;
   }
 
-  /** 选中根层级的全部节点 (后代随容器) */
+  /** 选中指定节点与连线 (替换原选区) */
+  select(nodeIds: readonly string[], connectorIds: readonly string[] = []): void {
+    this.engine.session.setSelection({ nodeIds, connectorIds });
+  }
+
+  /** 选中根层级的全部节点 (后代随容器) 与全部连线 */
   selectAll(): void {
-    this.select(this.getChildIds());
+    this.select(
+      this.getChildIds(),
+      this.engine.entityStore.getAllConnectors().map((runtime) => runtime.entity.id)
+    );
   }
 
   get nodeCount(): number {
@@ -262,13 +322,32 @@ export class SkyNoteEditor<TContainer = unknown> {
     return this.engine.hitTestNode(point);
   }
 
-  /** 节点在世界坐标中占据的整体外接框 (含框外标题等装饰与旋转)，用于工具栏定位；节点都不存在时为 undefined */
-  getNodesBounds(nodeIds: Iterable<string>): RectBounds | undefined {
+  /** 世界坐标处的连线 (距离按屏幕像素容差判定) */
+  connectorAt(point: Point): Readonly<ConnectorEntity> | undefined {
+    return this.engine.hitTestConnector(point);
+  }
+
+  getConnector(id: string): Readonly<ConnectorEntity> | undefined {
+    return this.engine.documentStore.getConnector(id);
+  }
+
+  /** 连线的生效样式 (线型默认样式 < 连线自身样式)，面板显示的值即画出的值 */
+  getConnectorStyle(id: string): ConnectorStyle | undefined {
+    const connector = this.engine.documentStore.getConnector(id);
+    return connector && resolveConnectorStyle(connector, this.engine.routers);
+  }
+
+  /**
+   * 节点与连线在世界坐标中的整体外接框 (节点含框外标题等装饰与旋转，连线取真实路由)，用于工具栏定位；
+   * 都不存在时为 undefined
+   */
+  getEntitiesBounds(refs: EntityRefs): RectBounds | undefined {
     let bounds: RectBounds | undefined;
-    for (const id of nodeIds) {
-      const nodeBounds = this.engine.getNodeOccupiedBounds(id);
-      if (nodeBounds) bounds = bounds ? unionBounds(bounds, nodeBounds) : nodeBounds;
-    }
+    const add = (b: RectBounds | undefined) => {
+      if (b) bounds = bounds ? unionBounds(bounds, b) : b;
+    };
+    for (const id of refs.nodeIds ?? []) add(this.engine.getNodeOccupiedBounds(id));
+    for (const id of refs.connectorIds ?? []) add(this.engine.getConnectorRoute(id)?.bounds);
     return bounds;
   }
 
@@ -318,18 +397,18 @@ export class SkyNoteEditor<TContainer = unknown> {
   }
 
   /**
-   * 创建副本 (含后代与内部连线)，偏移后选中副本；一步撤销
-   * @returns 副本中最顶层节点的 id
+   * 创建副本 (节点含后代与内部连线；单独选中的连线一并复制)，偏移后选中副本；一步撤销
+   * @returns 副本中最顶层节点与连线的 id
    */
-  duplicateNodes(nodeIds: readonly string[], offset: Point = { x: 20, y: 20 }): string[] {
-    const ids = this.engine.documentStore.duplicateNodes(nodeIds, offset);
-    if (ids.length > 0) this.select(ids);
+  duplicateEntities(refs: EntityRefs, offset: Point = { x: 20, y: 20 }): EntityIds {
+    const ids = this.engine.documentStore.duplicateEntities(refs, offset);
+    if (ids.nodeIds.length + ids.connectorIds.length > 0) this.select(ids.nodeIds, ids.connectorIds);
     return ids;
   }
 
-  /** 删除节点：级联删除后代与依附连线，一步撤销 */
-  deleteNodes(nodeIds: readonly string[], label?: string): void {
-    this.engine.documentStore.removeNodes(nodeIds, { label });
+  /** 删除节点与连线：节点级联删除后代与依附连线，一步撤销 */
+  deleteEntities(refs: EntityRefs, label?: string): void {
+    this.engine.documentStore.removeEntities(refs, { label });
   }
 
   // ==================== 属性与样式 ====================
@@ -362,8 +441,16 @@ export class SkyNoteEditor<TContainer = unknown> {
     );
   }
 
-  setNodesLocked(nodeIds: readonly string[], locked: boolean): void {
-    this.updateNodes(nodeIds, { locked }, { label: locked ? '锁定节点' : '解锁节点' });
+  /** 锁定或解锁节点与连线，一步撤销 */
+  setLocked(refs: EntityRefs, locked: boolean): void {
+    const { documentStore } = this.engine;
+    documentStore.batch(
+      () => {
+        documentStore.updateNodes(refs.nodeIds ?? [], { locked });
+        documentStore.updateConnectors(refs.connectorIds ?? [], { locked });
+      },
+      locked ? '锁定' : '解锁'
+    );
   }
 
   setAspectLocked(nodeIds: readonly string[], locked: boolean): void {
@@ -378,6 +465,44 @@ export class SkyNoteEditor<TContainer = unknown> {
   /** 节点外框适应内容，已适应或不支持的节点跳过 */
   fitNodesContent(nodeIds: readonly string[]): void {
     this.engine.documentStore.fitContent(nodeIds);
+  }
+
+  // ==================== 连线 ====================
+
+  /**
+   * 合并写入连线样式 (颜色、粗细、虚线、箭头、圆角)；连续调整传同一 groupId 合并为一步撤销
+   * 之后新画的连线沿用这次设置的样式 (与 FigJam 一致：用户改过的样式通常就是想要的默认样式)
+   */
+  updateConnectorStyle(connectorIds: readonly string[], style: Partial<ConnectorStyle>, options?: EditOptions): void {
+    this.engine.documentStore.updateConnectors(
+      connectorIds,
+      { style },
+      { label: '更新连线样式', ...options, merge: true }
+    );
+    this.connectorTool.style = { ...this.connectorTool.style, ...style };
+  }
+
+  /** 切换线型 (直线 / 折线 / 曲线)：手动拐点的含义随线型不同，一并清除；之后新画的连线沿用该线型 */
+  setConnectorType(connectorIds: readonly string[], connectorType: ConnectorLineType): void {
+    this.engine.documentStore.updateConnectors(
+      connectorIds,
+      { connectorType, controlPoints: undefined },
+      { label: '切换线型' }
+    );
+    this.connectorTool.connectorType = connectorType;
+  }
+
+  /**
+   * 在连线的自由端新建节点并连上 (节点朝向另一端的边落在自由端)，一步撤销，并选中新节点
+   * @returns 新节点 id；连线没有自由端时返回 null
+   */
+  connectNewNode(connectorId: string, request: ConnectNodeRequest): string | null {
+    return this.connectorTool.connectNewNode(connectorId, request);
+  }
+
+  /** 清除手动拐点，恢复自动路由 */
+  resetConnectorRoute(connectorIds: readonly string[]): void {
+    this.engine.documentStore.updateConnectors(connectorIds, { controlPoints: undefined }, { label: '恢复自动路由' });
   }
 
   // ==================== 几何变换 ====================

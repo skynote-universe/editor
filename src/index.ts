@@ -19,9 +19,13 @@ export type {
   CanvasTheme,
   CanvasThemeConfig,
   CanvasThemeSeed,
+  ConnectorEntity,
+  ConnectorStyle,
   CornerRadius,
   CreateNodeRequest,
   DocumentChangeSet,
+  EntityIds,
+  EntityRefs,
   HistoryChangeListener,
   InputScope,
   LayerMove,
@@ -37,4 +41,11 @@ export type {
   ViewportState
 } from '@skynote/core';
 export { STICKY_COLORS, STICKY_DEFAULT_SIZE, isFormatActive } from '@skynote/plugins-basic';
-export type { StickyColor, TextEditPlugin, TextFormat, TextFormatState } from '@skynote/plugins-basic';
+export type {
+  ConnectNodeRequest,
+  ConnectorDropEvent,
+  StickyColor,
+  TextEditPlugin,
+  TextFormat,
+  TextFormatState
+} from '@skynote/plugins-basic';

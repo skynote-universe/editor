@@ -8,6 +8,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   DETACHED_CANVAS_HOST,
+  SyntheticPointerEvent,
   type CanvasRenderer,
   type RenderAdapter,
   type SkyNoteEngine,
@@ -128,7 +129,7 @@ describe('SkyNoteEditor', () => {
     editor.updateNodes([atId], { locked: true });
     expect(editor.getNode(atId)?.locked).toBe(true);
 
-    editor.setNodesLocked([atId], false);
+    editor.setLocked({ nodeIds: [atId] }, false);
     expect(editor.getNode(atId)?.locked).toBe(false);
 
     // 门面尺寸、圆角与旋转
@@ -153,16 +154,67 @@ describe('SkyNoteEditor', () => {
     // 删除与副本走内核命令：容器连同后代一起复制、一起删除
     const store = engine.documentStore;
     store.addNode({ ...store.getNode(atId)!, id: 'child', parentId: atId, x: 0, y: 0, rotation: 0 });
-    const [copyId] = editor.duplicateNodes([atId]);
+    const [copyId] = editor.duplicateEntities({ nodeIds: [atId] }).nodeIds;
     expect([...engine.session.selectedNodeIds]).toEqual([copyId]);
     expect(engine.entityStore.getChildIds(copyId).size).toBe(1);
-    editor.deleteNodes([atId, copyId]);
+    editor.deleteEntities({ nodeIds: [atId, copyId] });
     expect(editor.nodeCount).toBe(0);
 
     // 颜色解析与历史记录状态
     expect(editor.canUndo).toBe(true);
     expect(editor.resolveColor('canvas-background')).toBeDefined();
 
+    editor.destroy();
+  });
+
+  it('连线：进入连线工具画线后回到选择工具；生效样式含线型默认圆角；改样式、线型与删除', () => {
+    const editor = new SkyNoteEditor({ renderer: new FakeAdapter() });
+    const toolChanges: string[] = [];
+    editor.onToolChange(() => toolChanges.push(editor.tool));
+    editor.startConnectorTool('curved');
+    expect(editor.tool).toBe('connector');
+    expect(editor.connectorToolType).toBe('curved');
+    editor.stopTool();
+    expect(toolChanges).toEqual(['connector', 'select']);
+
+    const a = editor.createNode({ nodeType: 'sticky', x: 0, y: 0 })!;
+    const b = editor.createNode({ nodeType: 'sticky', x: 400, y: 0 })!;
+    const id = editor.engine.documentStore.createConnector({ from: { nodeId: a }, to: { nodeId: b } })!;
+    expect(editor.getConnectorStyle(id)?.cornerRadius).toBe(8);
+    expect(editor.getEntitiesBounds({ connectorIds: [id] })).toBeDefined();
+    expect(editor.connectorAt({ x: 300, y: 100 })?.id).toBe(id);
+
+    editor.updateConnectorStyle([id], { stroke: '$red', endArrow: 'triangle' });
+    editor.setConnectorType([id], 'straight');
+    expect(editor.getConnector(id)).toMatchObject({
+      connectorType: 'straight',
+      style: { stroke: '$red', endArrow: 'triangle' }
+    });
+    expect(editor.getConnectorStyle(id)?.cornerRadius).toBeUndefined();
+
+    // 之后新画的连线沿用刚设置的线型与样式
+    expect(editor.connectorToolType).toBe('straight');
+    editor.startConnectorTool();
+    const pointer = (point: { x: number; y: number }, phase: 'down' | 'move' | 'up') => {
+      const event = new SyntheticPointerEvent({ point, target: editor.nodeAt(point) });
+      if (phase === 'down') editor.engine.pointer.dispatchPointerDown(event);
+      else if (phase === 'move') editor.engine.pointer.dispatchPointerMove(event);
+      else editor.engine.pointer.dispatchPointerUp(event);
+    };
+    pointer({ x: 100, y: 500 }, 'down');
+    pointer({ x: 300, y: 500 }, 'move');
+    pointer({ x: 300, y: 500 }, 'up');
+    const [drawn] = editor.selectedConnectorIds;
+    expect(editor.getConnector(drawn)).toMatchObject({
+      connectorType: 'straight',
+      style: { stroke: '$red', endArrow: 'triangle' }
+    });
+    editor.deleteEntities({ connectorIds: [drawn] });
+
+    const copies = editor.duplicateEntities({ connectorIds: [id] });
+    expect([...editor.selectedConnectorIds]).toEqual(copies.connectorIds);
+    editor.deleteEntities({ connectorIds: [id, ...copies.connectorIds] });
+    expect(editor.getConnector(id)).toBeUndefined();
     editor.destroy();
   });
 
@@ -174,7 +226,7 @@ describe('SkyNoteEditor', () => {
     expect(committed).toHaveLength(1);
 
     const exported = JSON.parse(JSON.stringify(editor.exportDocument()));
-    editor.deleteNodes([id]);
+    editor.deleteEntities({ nodeIds: [id] });
     expect(editor.importDocument({ broken: true }).ok).toBe(false);
     expect(editor.nodeCount).toBe(0);
 
