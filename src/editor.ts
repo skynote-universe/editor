@@ -58,6 +58,7 @@ import {
 } from '@skynote/core';
 import {
   BasicNodesPlugin,
+  BranchConnectorsPlugin,
   ClipboardPlugin,
   CONNECTOR_TOOL,
   ConnectorEditPlugin,
@@ -117,6 +118,8 @@ export class SkyNoteEditor<TContainer = unknown> {
     this.adapter = renderer;
     this.engine = new SkyNoteEngine({ ...engineOptions, fonts: renderer.fonts })
       .use(new BasicNodesPlugin())
+      // 布局树的分支线 (ADR-130)：未安装对应布局插件时也能按通用默认值绘制
+      .use(new BranchConnectorsPlugin())
       .use(new ViewportNavigationPlugin())
       .use(new SelectionPlugin())
       .use(new SelectionOutlinePlugin())
