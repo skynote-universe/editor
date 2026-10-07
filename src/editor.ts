@@ -24,6 +24,7 @@ import {
   resolveNodeStyle,
   resolveThemeColor,
   screenToWorld,
+  splitStyleAlpha,
   unionBounds,
   worldToScreen,
   type CanvasDocument,
@@ -438,9 +439,16 @@ export class SkyNoteEditor<TContainer = unknown> {
     this.engine.documentStore.updateNodes(nodeIds, fields, options);
   }
 
-  /** 合并写入样式 (只改给出的样式项)；连续调整 (如拖动取色) 传同一 groupId 合并为一步撤销 */
+  /**
+   * 合并写入样式 (只改给出的样式项)；连续调整 (如拖动取色) 传同一 groupId 合并为一步撤销
+   * 带透明度的填充色、描边色与导入时一样拆成不透明色值与单独的透明度
+   */
   updateNodeStyle(nodeIds: readonly string[], style: Partial<NodeStyle>, options?: EditOptions): void {
-    this.engine.documentStore.updateNodes(nodeIds, { style }, { label: '更新样式', ...options, merge: true });
+    this.engine.documentStore.updateNodes(
+      nodeIds,
+      { style: splitStyleAlpha(style) },
+      { label: '更新样式', ...options, merge: true }
+    );
   }
 
   /**

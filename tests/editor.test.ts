@@ -129,6 +129,11 @@ describe('SkyNoteEditor', () => {
     editor.updateNodes([atId], { locked: true });
     expect(editor.getNode(atId)?.locked).toBe(true);
 
+    // 带透明度的颜色与导入时一样拆开：界面显示的不透明度即实际效果
+    editor.updateNodeStyle([atId], { fill: 'rgba(255, 0, 0, 0.5)', stroke: '#0000FF80' });
+    expect(editor.getNode(atId)!.style).toMatchObject({ fill: '#FF0000', fillOpacity: 0.5, stroke: '#0000FF' });
+    expect(editor.getNode(atId)!.style!.strokeOpacity).toBeCloseTo(0.5, 2);
+
     editor.setLocked({ nodeIds: [atId] }, false);
     expect(editor.getNode(atId)?.locked).toBe(false);
 
