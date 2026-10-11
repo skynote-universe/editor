@@ -15,7 +15,11 @@ export {
 } from '@skynote/core';
 export type {
   CanvasDocument,
+  CanvasAssetMeta,
   CanvasPatch,
+  AssetAdapter,
+  AssetResolveOptions,
+  AssetUploadResult,
   CanvasTheme,
   CanvasThemeConfig,
   CanvasThemeSeed,
@@ -28,6 +32,7 @@ export type {
   EntityRefs,
   HistoryChangeListener,
   InputScope,
+  ImageFit,
   LayerMove,
   NodeEntity,
   NodeStyle,
@@ -45,7 +50,10 @@ export type {
   ConnectNodeRequest,
   ConnectorDropEvent,
   StickyColor,
+  ImageCreateOptions,
+  ImageNodeFields,
   TextEditPlugin,
   TextFormat,
   TextFormatState
 } from '@skynote/plugins-basic';
+export { ImageNodeType } from '@skynote/plugins-basic';

@@ -420,6 +420,16 @@ export class SkyNoteEditor<TContainer = unknown> {
     return id;
   }
 
+  /** 上传并在指定世界坐标插入图片；未配置资产适配器时返回 null */
+  insertImage(file: unknown, point: Point): Promise<string | null> {
+    return this.engine.insertImage(file, point);
+  }
+
+  /** 替换选中图片的资产引用；保留节点尺寸、位置、样式与显示方式 */
+  replaceImage(nodeIds: readonly string[], file: unknown): Promise<boolean> {
+    return this.engine.replaceImage(nodeIds, file);
+  }
+
   /**
    * 创建副本 (节点含后代与内部连线；单独选中的连线一并复制)，偏移后选中副本；一步撤销
    * @returns 副本中最顶层节点与连线的 id
@@ -438,7 +448,11 @@ export class SkyNoteEditor<TContainer = unknown> {
   // ==================== 属性与样式 ====================
 
   /** 写入节点字段，一次提交；style / data 默认按字段合并 */
-  updateNodes(nodeIds: readonly string[], fields: Partial<NodeEntity>, options?: UpdateOptions): void {
+  updateNodes(
+    nodeIds: readonly string[],
+    fields: Partial<NodeEntity> | ((node: Readonly<NodeEntity>) => Partial<NodeEntity>),
+    options?: UpdateOptions
+  ): void {
     this.engine.documentStore.updateNodes(nodeIds, fields, options);
   }
 
@@ -496,6 +510,33 @@ export class SkyNoteEditor<TContainer = unknown> {
   /** 节点外框适应内容，已适应或不支持的节点跳过 */
   fitNodesContent(nodeIds: readonly string[]): void {
     this.engine.documentStore.fitContent(nodeIds);
+  }
+
+  /** 将图片节点恢复为资产记录中的固有尺寸；缺少尺寸元数据时跳过 */
+  restoreImageSize(nodeIds: readonly string[]): void {
+    const assets = this.engine.documentStore.getView().assets ?? {};
+    this.engine.documentStore.updateNodes(
+      nodeIds,
+      (node) => {
+        const asset = node.image ? assets[node.image.assetId] : undefined;
+        return asset?.width && asset.height ? { width: asset.width, height: asset.height } : {};
+      },
+      { label: '恢复图片原始尺寸' }
+    );
+  }
+
+  /** 保留图片节点当前宽度，并按资产固有比例恢复高度 */
+  restoreImageRatio(nodeIds: readonly string[]): void {
+    const assets = this.engine.documentStore.getView().assets ?? {};
+    this.engine.documentStore.updateNodes(
+      nodeIds,
+      (node) => {
+        const asset = node.image ? assets[node.image.assetId] : undefined;
+        if (!asset?.width || !asset.height) return {};
+        return { height: Math.max(1, Math.round((node.width * asset.height) / asset.width)) };
+      },
+      { label: '恢复图片比例' }
+    );
   }
 
   // ==================== 连线 ====================
@@ -576,13 +617,13 @@ export class SkyNoteEditor<TContainer = unknown> {
   importDocument(value: unknown): ParseResult<void> {
     const parsed = parseCanvasDocument(value);
     if (!parsed.ok) return parsed;
-    this.engine.documentStore.replaceContent(parsed.value.content, { label: '导入文档' });
+    this.engine.documentStore.replaceContent(parsed.value.content, { label: '导入文档' }, parsed.value.assets ?? {});
     return { ok: true, value: undefined };
   }
 
   /** 从本地存储恢复文档 (须先经 parseCanvasDocument 校验)：不进撤销栈，并清空撤销历史 */
   restoreDocument(doc: CanvasDocument): void {
-    this.engine.documentStore.replaceContent(doc.content, { undoable: false });
+    this.engine.documentStore.replaceContent(doc.content, { undoable: false }, doc.assets ?? {});
     this.engine.documentStore.clearHistory();
   }
 
