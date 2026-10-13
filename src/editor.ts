@@ -28,6 +28,8 @@ import {
   unionBounds,
   worldToScreen,
   type CanvasDocument,
+  type AssetTaskEvent,
+  type AssetTaskResult,
   type CanvasPatch,
   type CanvasRenderer,
   type CanvasTheme,
@@ -112,6 +114,7 @@ export class SkyNoteEditor<TContainer = unknown> {
   private readonly connectorTool = new ConnectorToolPlugin();
   private readonly adapter: RenderAdapter<TContainer>;
   private renderer: CanvasRenderer | null = null;
+  private readonly assetDisposers: (() => void)[] = [];
 
   constructor(options: SkyNoteEditorOptions<TContainer>) {
     const { renderer, plugins = [], ...engineOptions } = options;
@@ -130,6 +133,32 @@ export class SkyNoteEditor<TContainer = unknown> {
       .use(new ConnectorEditPlugin())
       .use(this.textEditor);
     for (const plugin of plugins) this.engine.use(plugin);
+    let selectionVersion = 0;
+    let latestInsertion = '';
+    const intents = new Map<string, number>();
+    this.assetDisposers.push(this.onSelectionChange(() => selectionVersion++));
+    this.assetDisposers.push(
+      this.engine.onAssetTaskEvent((event) => {
+        if (event.phase === 'rejected' || event.task.operation === 'replace-image') return;
+        if (event.phase === 'started') {
+          latestInsertion = event.task.requestId;
+          intents.set(event.task.requestId, selectionVersion);
+          return;
+        }
+        const version = intents.get(event.task.requestId);
+        intents.delete(event.task.requestId);
+        if (
+          event.result.status !== 'succeeded' ||
+          version !== selectionVersion ||
+          latestInsertion !== event.task.requestId ||
+          event.task.documentEpoch !== this.engine.documentEpoch
+        )
+          return;
+        const value = event.result.value;
+        if (typeof value === 'string') this.select([value]);
+        else if ('nodeIds' in value) this.select(value.nodeIds, value.connectorIds);
+      })
+    );
   }
 
   // ==================== 挂载与生命周期 ====================
@@ -152,11 +181,19 @@ export class SkyNoteEditor<TContainer = unknown> {
 
   /** 卸载渲染器并销毁引擎 (含全部插件) */
   destroy(): void {
+    for (const dispose of this.assetDisposers.splice(0)) dispose();
     this.unmount();
     this.engine.destroy();
   }
 
   // ==================== 事件订阅 ====================
+
+  get documentEpoch(): number {
+    return this.engine.documentEpoch;
+  }
+  onAssetTaskEvent(listener: (event: AssetTaskEvent) => void): () => void {
+    return this.engine.onAssetTaskEvent(listener);
+  }
 
   /** 选中的节点或连线变化 */
   onSelectionChange(listener: () => void): () => void {
@@ -421,12 +458,12 @@ export class SkyNoteEditor<TContainer = unknown> {
   }
 
   /** 上传并在指定世界坐标插入图片；未配置资产适配器时返回 null */
-  insertImage(file: unknown, point: Point): Promise<string | null> {
+  insertImage(file: unknown, point: Point): Promise<AssetTaskResult<string>> {
     return this.engine.insertImage(file, point);
   }
 
   /** 替换选中图片的资产引用；保留节点尺寸、位置、样式与显示方式 */
-  replaceImage(nodeIds: readonly string[], file: unknown): Promise<boolean> {
+  replaceImage(nodeIds: readonly string[], file: unknown): Promise<AssetTaskResult<readonly string[]>> {
     return this.engine.replaceImage(nodeIds, file);
   }
 

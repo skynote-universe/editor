@@ -13,7 +13,8 @@ import {
   type RenderAdapter,
   type SkyNoteEngine,
   type SkyNotePlugin,
-  type FontMeasurer
+  type FontMeasurer,
+  type AssetUploadResult
 } from '@skynote/core';
 import { SELECTION_PLUGIN_ID } from '@skynote/plugins-basic';
 import { SkyNoteEditor } from '../src';
@@ -42,6 +43,43 @@ class FakeAdapter implements RenderAdapter<FakeContainer> {
     };
   }
 }
+
+describe('图片成功结果与选区意图', () => {
+  it('成功插入选中新节点，修改选区后到达的结果不抢占；尺寸恢复可撤销', async () => {
+    let finish!: (result: AssetUploadResult) => void;
+    const editor = new SkyNoteEditor({
+      renderer: new FakeAdapter(),
+      assets: {
+        upload: () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          }),
+        resolve: (src) => src
+      }
+    });
+    try {
+      const pending = editor.insertImage('first', { x: 100, y: 100 });
+      finish({ src: 'memory:first', mimeType: 'image/png', width: 800, height: 400 });
+      const result = await pending;
+      if (result.status !== 'succeeded') throw new Error(JSON.stringify(result));
+      expect([...editor.selectedNodeIds]).toEqual([result.value]);
+      const next = editor.insertImage('second', { x: 500, y: 500 });
+      editor.select([]);
+      finish({ src: 'memory:second', mimeType: 'image/png', width: 100, height: 80 });
+      expect((await next).status).toBe('succeeded');
+      expect([...editor.selectedNodeIds]).toEqual([]);
+      editor.updateNodes([result.value], () => ({ width: 300, height: 100 }));
+      editor.restoreImageRatio([result.value]);
+      expect(editor.getNode(result.value)?.height).toBe(150);
+      editor.restoreImageSize([result.value]);
+      expect(editor.getNode(result.value)).toMatchObject({ width: 800, height: 400 });
+      editor.undo();
+      expect(editor.getNode(result.value)).toMatchObject({ width: 300, height: 150 });
+    } finally {
+      editor.destroy();
+    }
+  });
+});
 
 describe('SkyNoteEditor', () => {
   it('创建即装好基础节点与交互插件并注入适配器的字体测量器，额外插件装在其后', () => {
