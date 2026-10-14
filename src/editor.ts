@@ -16,6 +16,8 @@ import {
   SkyNoteEngine,
   compactCornerRadius,
   clonePlainData,
+  inspectDocumentAssets,
+  type DocumentAssetInspection,
   computeWorldFrame,
   expandCornerRadius,
   isAspectLocked,
@@ -651,10 +653,25 @@ export class SkyNoteEditor<TContainer = unknown> {
    * 导入外部文档 (文件)：经白名单校验后替换当前内容，撤销一步即回到原内容
    * @returns 校验失败时给出出错位置，当前内容不变
    */
-  importDocument(value: unknown): ParseResult<void> {
+  prepareDocumentImport(value: unknown): ParseResult<DocumentAssetInspection> {
     const parsed = parseCanvasDocument(value);
     if (!parsed.ok) return parsed;
-    this.engine.documentStore.replaceContent(parsed.value.content, { label: '导入文档' }, parsed.value.assets ?? {});
+    try {
+      return { ok: true, value: inspectDocumentAssets(parsed.value, this.engine.nodeTypes) };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : '文档资产引用无效' };
+    }
+  }
+
+  /** 宿主确认后可接受媒体问题；结构解析与事务守卫始终执行。 */
+  importDocument(value: unknown, options?: { allowAssetIssues?: boolean }): ParseResult<void> {
+    const prepared = this.prepareDocumentImport(value);
+    if (!prepared.ok) return prepared;
+    if (prepared.value.issues.length && !options?.allowAssetIssues)
+      return { ok: false, error: prepared.value.issues[0].detail };
+    const doc = prepared.value.document;
+    const record = this.engine.documentStore.replaceContent(doc.content, { label: '导入文档' }, doc.assets ?? {});
+    if (!record) return { ok: false, error: '文档结构或事务校验失败，未导入' };
     return { ok: true, value: undefined };
   }
 

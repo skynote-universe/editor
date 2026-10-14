@@ -5,7 +5,7 @@
  * 用替身适配器测试：编辑器不依赖任何渲染引擎，只经 RenderAdapter 协议挂载与卸载。
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   DETACHED_CANVAS_HOST,
   SyntheticPointerEvent,
@@ -45,6 +45,51 @@ class FakeAdapter implements RenderAdapter<FakeContainer> {
 }
 
 describe('图片成功结果与选区意图', () => {
+  it('导入通过节点公开契约拒绝缺失资产或非法图片字段，原内容与历史不变', () => {
+    const editor = new SkyNoteEditor({ renderer: new FakeAdapter() });
+    try {
+      const id = editor.createNode({ nodeType: 'sticky', x: 0, y: 0 })!;
+      const original = editor.exportDocument();
+      const document = editor.exportDocument();
+      document.content.nodes = {
+        picture: {
+          ...document.content.nodes[id],
+          id: 'picture',
+          nodeType: 'image',
+          image: { assetId: 'missing', fit: 'cover' }
+        }
+      };
+      expect(editor.importDocument(document)).toMatchObject({ ok: false });
+      expect(editor.exportDocument()).toEqual(original);
+      document.assets = { missing: { id: 'missing', src: 'memory:picture', mimeType: 'image/png' } };
+      document.content.nodes.picture.image!.fit = 'invalid' as 'cover';
+      expect(editor.importDocument(document).ok).toBe(false);
+      expect(editor.exportDocument()).toEqual(original);
+      editor.undo();
+      expect(editor.nodeCount).toBe(0);
+      const prepared = editor.prepareDocumentImport(document);
+      if (!prepared.ok) throw new Error(prepared.error);
+      expect(prepared.value.issues.some((issue) => issue.repaired)).toBe(true);
+      expect(editor.nodeCount).toBe(0);
+      expect(editor.importDocument(document, { allowAssetIssues: true }).ok).toBe(true);
+      expect(editor.getNode('picture')?.image?.fit).toBe('cover');
+      editor.undo();
+      expect(editor.nodeCount).toBe(0);
+      expect(editor.importDocument({ broken: true }, { allowAssetIssues: true }).ok).toBe(false);
+      const cyclic = editor.exportDocument();
+      cyclic.content.nodes = { picture: { ...document.content.nodes.picture, parentId: 'picture' } };
+      const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+      try {
+        expect(editor.importDocument(cyclic, { allowAssetIssues: true }).ok).toBe(false);
+        expect(editor.nodeCount).toBe(0);
+      } finally {
+        errors.mockRestore();
+      }
+    } finally {
+      editor.destroy();
+    }
+  });
+
   it('成功插入选中新节点，修改选区后到达的结果不抢占；尺寸恢复可撤销', async () => {
     let finish!: (result: AssetUploadResult) => void;
     const editor = new SkyNoteEditor({
