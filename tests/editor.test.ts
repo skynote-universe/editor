@@ -45,6 +45,52 @@ class FakeAdapter implements RenderAdapter<FakeContainer> {
 }
 
 describe('图片成功结果与选区意图', () => {
+  it('图片重试通过可选渲染协议，不写文档或历史，订阅跨重挂载并成对注销', () => {
+    const dispose = vi.fn();
+    const retry = vi.fn((ids: readonly string[]) => [...ids]);
+    let changed!: () => void;
+    const editor = new SkyNoteEditor({
+      renderer: {
+        fonts: { measureWidth: () => 0 },
+        mount: () => ({
+          images: {
+            getState: () => ({ status: 'failed' as const, reason: 'load-failed' as const }),
+            retry,
+            subscribe: (listener) => {
+              changed = listener;
+              return dispose;
+            }
+          },
+          destroy: vi.fn()
+        })
+      }
+    });
+    const listener = vi.fn();
+    const unsubscribe = editor.onImageLoadChange(listener);
+    const before = editor.exportDocument();
+    expect(editor.retryImages(['image'])).toEqual([]);
+    expect(editor.getImageLoadState('image')).toBeUndefined();
+    editor.mount({});
+    expect(editor.getImageLoadState('image')).toEqual({ status: 'failed', reason: 'load-failed' });
+    expect(editor.retryImages(['image'])).toEqual(['image']);
+    changed();
+    expect(listener).toHaveBeenCalled();
+    expect(editor.exportDocument()).toEqual(before);
+    expect(editor.canUndo).toBe(false);
+    editor.mount({});
+    expect(dispose).toHaveBeenCalledTimes(1);
+    editor.unmount();
+    expect(dispose).toHaveBeenCalledTimes(2);
+    expect(editor.getImageLoadState('image')).toBeUndefined();
+    expect(editor.retryImages(['image'])).toEqual([]);
+    unsubscribe();
+    listener.mockClear();
+    editor.mount({});
+    expect(listener).not.toHaveBeenCalled();
+    editor.destroy();
+    expect(dispose).toHaveBeenCalledTimes(3);
+  });
+
   it('导入通过节点公开契约拒绝缺失资产或非法图片字段，原内容与历史不变', () => {
     const editor = new SkyNoteEditor({ renderer: new FakeAdapter() });
     try {

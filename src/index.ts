@@ -33,6 +33,8 @@ export type {
   HistoryChangeListener,
   InputScope,
   ImageFit,
+  ImageLoadState,
+  ImageLoadFailure,
   LayerMove,
   NodeEntity,
   NodeStyle,

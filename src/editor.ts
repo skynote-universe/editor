@@ -34,6 +34,7 @@ import {
   type AssetTaskResult,
   type CanvasPatch,
   type CanvasRenderer,
+  type ImageLoadState,
   type CanvasTheme,
   type CanvasThemeConfig,
   type ConnectorEntity,
@@ -116,6 +117,8 @@ export class SkyNoteEditor<TContainer = unknown> {
   private readonly connectorTool = new ConnectorToolPlugin();
   private readonly adapter: RenderAdapter<TContainer>;
   private renderer: CanvasRenderer | null = null;
+  private imageSubscription?: () => void;
+  private readonly imageListeners = new Set<() => void>();
   private readonly assetDisposers: (() => void)[] = [];
 
   constructor(options: SkyNoteEditorOptions<TContainer>) {
@@ -173,22 +176,45 @@ export class SkyNoteEditor<TContainer = unknown> {
   mount(container: TContainer): void {
     this.unmount();
     this.renderer = this.adapter.mount(this.engine, container);
+    this.imageSubscription = this.renderer.images?.subscribe(() => this.notifyImageLoadChange());
+    this.notifyImageLoadChange();
   }
 
   /** 从容器卸载渲染器；引擎与文档保留 */
   unmount(): void {
+    this.imageSubscription?.();
+    this.imageSubscription = undefined;
     this.renderer?.destroy();
     this.renderer = null;
+    this.notifyImageLoadChange();
   }
 
   /** 卸载渲染器并销毁引擎 (含全部插件) */
   destroy(): void {
     for (const dispose of this.assetDisposers.splice(0)) dispose();
     this.unmount();
+    this.imageListeners.clear();
     this.engine.destroy();
   }
 
   // ==================== 事件订阅 ====================
+
+  getImageLoadState(nodeId: string): ImageLoadState | undefined {
+    return this.renderer?.images?.getState(nodeId);
+  }
+
+  retryImages(nodeIds: readonly string[]): readonly string[] {
+    return this.renderer?.images?.retry(nodeIds) ?? [];
+  }
+
+  onImageLoadChange(listener: () => void): () => void {
+    this.imageListeners.add(listener);
+    return () => this.imageListeners.delete(listener);
+  }
+
+  private notifyImageLoadChange(): void {
+    for (const listener of this.imageListeners) listener();
+  }
 
   get documentEpoch(): number {
     return this.engine.documentEpoch;
