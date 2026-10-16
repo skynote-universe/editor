@@ -45,6 +45,20 @@ class FakeAdapter implements RenderAdapter<FakeContainer> {
 }
 
 describe('图片成功结果与选区意图', () => {
+  it('历史门面返回完整隔离副本，撤销后重做资产仍可观察', () => {
+    const editor = new SkyNoteEditor({ renderer: new FakeAdapter() });
+    editor.engine.documentStore.commit({
+      patches: [{ op: 'set', path: ['assets', 'a'], value: { id: 'a', src: 'memory:a', mimeType: 'image/png' } }]
+    });
+    editor.undo();
+    const snapshot = editor.getHistorySnapshot();
+    expect(snapshot.redo).toHaveLength(1);
+    snapshot.redo[0].patches.length = 0;
+    editor.redo();
+    expect(editor.exportDocument().assets?.a.src).toBe('memory:a');
+    editor.destroy();
+  });
+
   it('图片重试通过可选渲染协议，不写文档或历史，订阅跨重挂载并成对注销', () => {
     const dispose = vi.fn();
     const retry = vi.fn((ids: readonly string[]) => [...ids]);

@@ -34,6 +34,7 @@ import {
   type AssetTaskResult,
   type CanvasPatch,
   type CanvasRenderer,
+  type CanvasHistorySnapshot,
   type ImageLoadState,
   type CanvasTheme,
   type CanvasThemeConfig,
@@ -218,6 +219,15 @@ export class SkyNoteEditor<TContainer = unknown> {
 
   get documentEpoch(): number {
     return this.engine.documentEpoch;
+  }
+
+  getHistorySnapshot(): CanvasHistorySnapshot {
+    return this.engine.documentStore.getHistorySnapshot();
+  }
+
+  /** 宿主维护入口：冻结事务与历史，等待内核资产任务的实际执行结束。 */
+  beginMaintenance(): { readonly drained: Promise<void>; resume(): void } {
+    return this.engine.beginMaintenance();
   }
   onAssetTaskEvent(listener: (event: AssetTaskEvent) => void): () => void {
     return this.engine.onAssetTaskEvent(listener);
@@ -705,6 +715,11 @@ export class SkyNoteEditor<TContainer = unknown> {
   restoreDocument(doc: CanvasDocument): void {
     this.engine.documentStore.replaceContent(doc.content, { undoable: false }, doc.assets ?? {});
     this.engine.documentStore.clearHistory();
+  }
+
+  /** 宿主显式恢复完整检查点；不等同于普通可撤销文件导入。 */
+  restoreRecovery(document: unknown, history: unknown): ParseResult<void> {
+    return this.engine.documentStore.restoreRecovery(document, history);
   }
 
   // ==================== 撤销与重做 ====================
