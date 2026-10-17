@@ -91,8 +91,8 @@ export type ViewportInsertRequest = {
   [T in keyof NodeCreateOptionsMap]: Omit<CreateNodeRequest<T>, 'x' | 'y' | 'origin' | 'parentId'>;
 }[keyof NodeCreateOptionsMap];
 
-/** 画布工具：选择 (默认) 或连线 */
-export type CanvasTool = 'select' | typeof CONNECTOR_TOOL;
+/** 画布工具：选择 (默认)、连线或插件扩展工具 (如画笔 brush、钢笔 pen) */
+export type CanvasTool = 'select' | typeof CONNECTOR_TOOL | (string & {});
 
 /** 内置线型 (路由器 id) */
 export type ConnectorLineType = 'straight' | 'orthogonal' | 'curved';
