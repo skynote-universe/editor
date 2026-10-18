@@ -33,6 +33,7 @@ import {
   type AssetTaskEvent,
   type AssetTaskResult,
   type CanvasPatch,
+  type CanvasOperationRecord,
   type CanvasRenderer,
   type CanvasHistorySnapshot,
   type ImageLoadState,
@@ -84,6 +85,8 @@ export interface SkyNoteEditorOptions<TContainer> extends Omit<SkyNoteEngineOpti
   renderer: RenderAdapter<TContainer>;
   /** 在基础插件之后额外安装的插件 (同 id 的插件会替换已安装者) */
   plugins?: readonly SkyNotePlugin[];
+  /** 是否以只读浏览模式初始化 (默认 false) */
+  readOnly?: boolean;
 }
 
 /** 在视口中心新建节点的请求：位置由视口决定；按已登记的节点类型逐一推导 options 的类型 */
@@ -123,7 +126,7 @@ export class SkyNoteEditor<TContainer = unknown> {
   private readonly assetDisposers: (() => void)[] = [];
 
   constructor(options: SkyNoteEditorOptions<TContainer>) {
-    const { renderer, plugins = [], ...engineOptions } = options;
+    const { renderer, plugins = [], readOnly = false, ...engineOptions } = options;
     this.adapter = renderer;
     this.engine = new SkyNoteEngine({ ...engineOptions, fonts: renderer.fonts })
       .use(new BasicNodesPlugin())
@@ -165,6 +168,7 @@ export class SkyNoteEditor<TContainer = unknown> {
         else if ('nodeIds' in value) this.select(value.nodeIds, value.connectorIds);
       })
     );
+    if (readOnly) this.setReadOnly(true);
   }
 
   // ==================== 挂载与生命周期 ====================
@@ -288,11 +292,11 @@ export class SkyNoteEditor<TContainer = unknown> {
   }
 
   /**
-   * 每次提交 (含撤销、重做、导入) 的正向补丁，按提交顺序通知；本地持久化据此追加写入日志，
+   * 每次提交 (含撤销、重做、导入) 的正向补丁与事务记录，按提交顺序通知；本地持久化据此追加写入日志，
    * 从快照按序重放即得到当前文档
    */
-  onCommit(listener: (patches: readonly CanvasPatch[]) => void): () => void {
-    return this.engine.documentStore.subscribe((_view, record) => listener(record.patches));
+  onCommit(listener: (patches: readonly CanvasPatch[], record: CanvasOperationRecord) => void): () => void {
+    return this.engine.documentStore.subscribe((_view, record) => listener(record.patches, record));
   }
 
   /** 撤销 / 重做可用状态变化 */
@@ -365,6 +369,7 @@ export class SkyNoteEditor<TContainer = unknown> {
 
   /** 进入连线工具：之后在画布上拖动画出一条该线型的连线，画完回到选择工具 */
   startConnectorTool(connectorType: ConnectorLineType = this.connectorToolType): void {
+    if (this.isReadOnly) return;
     this.connectorTool.connectorType = connectorType;
     this.engine.session.setTool(CONNECTOR_TOOL);
   }
@@ -372,6 +377,25 @@ export class SkyNoteEditor<TContainer = unknown> {
   /** 回到选择工具 (取消正在画的连线) */
   stopTool(): void {
     this.engine.session.setTool('select');
+  }
+
+  // ==================== 只读与模式 ====================
+
+  /** 当前是否处于只读浏览模式 */
+  get isReadOnly(): boolean {
+    return this.engine.session.isReadOnly;
+  }
+
+  /** 切换只读浏览模式 (只读模式下自动清空选区，禁止框选、移动、变形、文字编辑与连线新建) */
+  setReadOnly(readOnly: boolean): void {
+    this.engine.session.setReadOnly(readOnly);
+  }
+
+  /** 只读浏览模式变化订阅 */
+  onReadOnlyChange(listener: (isReadOnly: boolean) => void): () => void {
+    return this.engine.session.subscribe((change) => {
+      if (change.readOnlyChanged) listener(this.isReadOnly);
+    });
   }
 
   // ==================== 选区与查询 ====================

@@ -17,6 +17,7 @@ export type {
   CanvasDocument,
   CanvasAssetMeta,
   CanvasPatch,
+  CanvasOperationRecord,
   CanvasHistorySnapshot,
   AssetAdapter,
   AssetResolveOptions,

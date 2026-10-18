@@ -392,4 +392,37 @@ describe('SkyNoteEditor', () => {
     expect(editor.engine.clipboard.copy()).not.toBeNull();
     editor.destroy();
   });
+
+  it('只读模式：支持初始化与动态切换，切换时清空选区并阻止连线与选区交互', () => {
+    const editor = new SkyNoteEditor({ renderer: new FakeAdapter() });
+    const id = editor.createNode({ nodeType: 'sticky', x: 0, y: 0 })!;
+    editor.select([id]);
+    expect([...editor.selectedNodeIds]).toEqual([id]);
+
+    const readOnlyEvents: boolean[] = [];
+    editor.onReadOnlyChange((val) => readOnlyEvents.push(val));
+
+    editor.setReadOnly(true);
+    expect(editor.isReadOnly).toBe(true);
+    expect(readOnlyEvents).toEqual([true]);
+    expect(editor.selectedNodeIds.size).toBe(0);
+
+    // 只读下调用 startConnectorTool 被忽略
+    editor.startConnectorTool();
+    expect(editor.tool).toBe('select');
+
+    // 只读下尝试选中被清空
+    editor.select([id]);
+    expect(editor.selectedNodeIds.size).toBe(0);
+
+    // 切换回编辑模式
+    editor.setReadOnly(false);
+    expect(editor.isReadOnly).toBe(false);
+    expect(readOnlyEvents).toEqual([true, false]);
+
+    editor.select([id]);
+    expect([...editor.selectedNodeIds]).toEqual([id]);
+
+    editor.destroy();
+  });
 });
