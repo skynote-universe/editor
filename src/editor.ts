@@ -18,7 +18,6 @@ import {
   clonePlainData,
   inspectDocumentAssets,
   type DocumentAssetInspection,
-  computeWorldFrame,
   expandCornerRadius,
   isAspectLocked,
   parseCanvasDocument,
@@ -52,8 +51,8 @@ import {
   type LayerMove,
   type NodeCreateOptionsMap,
   type NodeEntity,
+  type NodeResizeAxes,
   type NodeStyle,
-  type NodeTransform,
   type ParseResult,
   type Point,
   type RadiusCorner,
@@ -75,10 +74,14 @@ import {
   type ConnectorDropEvent,
   SelectionOutlinePlugin,
   SelectionPlugin,
+  setFrameAutoLayout as applyFrameAutoLayout,
+  type StackLayoutOptions,
+  type StackPaddingInput,
   TextEditPlugin,
   TransformPlugin,
   ViewportNavigationPlugin
 } from '@skynote/plugins-basic';
+import { GeometryEditSession } from './geometry-edit-session';
 
 export interface SkyNoteEditorOptions<TContainer> extends Omit<SkyNoteEngineOptions, 'fonts'> {
   /** 渲染适配器 (如 @skynote/renderer-leafer 的 LeaferAdapter) */
@@ -124,6 +127,7 @@ export class SkyNoteEditor<TContainer = unknown> {
   private imageSubscription?: () => void;
   private readonly imageListeners = new Set<() => void>();
   private readonly assetDisposers: (() => void)[] = [];
+  private geometryEdits?: GeometryEditSession;
 
   constructor(options: SkyNoteEditorOptions<TContainer>) {
     const { renderer, plugins = [], readOnly = false, ...engineOptions } = options;
@@ -187,6 +191,7 @@ export class SkyNoteEditor<TContainer = unknown> {
 
   /** 从容器卸载渲染器；引擎与文档保留 */
   unmount(): void {
+    this.geometryEdits?.end();
     this.imageSubscription?.();
     this.imageSubscription = undefined;
     this.renderer?.destroy();
@@ -196,6 +201,8 @@ export class SkyNoteEditor<TContainer = unknown> {
 
   /** 卸载渲染器并销毁引擎 (含全部插件) */
   destroy(): void {
+    this.geometryEdits?.dispose();
+    this.geometryEdits = undefined;
     for (const dispose of this.assetDisposers.splice(0)) dispose();
     this.unmount();
     this.imageListeners.clear();
@@ -480,6 +487,11 @@ export class SkyNoteEditor<TContainer = unknown> {
     return node !== undefined && isAspectLocked(node, this.engine.nodeTypes.get(node.nodeType));
   }
 
+  /** 当前节点允许手动调整的尺寸轴，界面与画布控制柄遵循同一节点协议。 */
+  getNodeResizeAxes(id: string): NodeResizeAxes {
+    return this.engine.documentStore.getNodeResizePolicy(id, 'size').axes;
+  }
+
   /** 节点绘制时是否采用圆角 (界面据此决定是否提供圆角设置) */
   supportsCornerRadius(id: string): boolean {
     const node = this.engine.documentStore.getNode(id);
@@ -611,6 +623,39 @@ export class SkyNoteEditor<TContainer = unknown> {
     this.engine.documentStore.fitContent(nodeIds);
   }
 
+  /** 判断指定节点集合是否满足创建组合的条件 */
+  canGroupNodes(nodeIds: readonly string[]): boolean {
+    return this.engine.documentStore.canGroupNodes(nodeIds);
+  }
+
+  /** 判断指定节点集合是否包含可以解散的组合或含子节点的容器外壳 */
+  canUngroupNodes(nodeIds: readonly string[]): boolean {
+    return this.engine.documentStore.canUngroupNodes(nodeIds);
+  }
+
+  /** 将选中节点创建为组合并选中新组合，一步撤销 */
+  groupNodes(nodeIds: readonly string[]): string | null {
+    const groupId = this.engine.documentStore.groupNodes(nodeIds);
+    if (groupId) this.select([groupId]);
+    return groupId;
+  }
+
+  /** 取消组合或解散含子节点的容器外壳，并选中释放出的子节点，一步撤销 */
+  ungroupNodes(nodeIds: readonly string[]): string[] {
+    const released = this.engine.documentStore.ungroupNodes(nodeIds);
+    if (released.length > 0) this.select(released);
+    return released;
+  }
+
+  /** 开启、修改或关闭画框的自动堆叠布局，一步撤销 */
+  setFrameAutoLayout(
+    frameIds: readonly string[],
+    options: (Partial<Omit<StackLayoutOptions, 'padding'>> & { padding?: StackPaddingInput }) | null,
+    editOptions?: EditOptions
+  ): void {
+    applyFrameAutoLayout(this.engine.documentStore, this.engine.entityStore, frameIds, options, editOptions);
+  }
+
   /** 将图片节点恢复为资产记录中的固有尺寸；缺少尺寸元数据时跳过 */
   restoreImageSize(nodeIds: readonly string[]): void {
     const assets = this.engine.documentStore.getView().assets ?? {};
@@ -680,21 +725,19 @@ export class SkyNoteEditor<TContainer = unknown> {
 
   /** 设置节点宽高：左上角不动，比例锁定按节点自身状态联动，与拖控制柄同一缩放语义 */
   setNodeSize(nodeIds: readonly string[], size: { width?: number; height?: number }, options?: EditOptions): void {
-    this.engine.documentStore.resizeNodes(nodeIds, size, options);
+    this.geometryEdits ??= new GeometryEditSession(this.engine);
+    this.geometryEdits.resize(nodeIds, size, { label: '调整尺寸', ...options });
   }
 
   /** 设置节点旋转角度 (各自绕自身中心，规整到 0~360) */
   setNodeRotation(nodeIds: readonly string[], rotation: number, options?: EditOptions): void {
-    const target = ((rotation % 360) + 360) % 360;
-    const { documentStore, entityStore } = this.engine;
-    const transforms: NodeTransform[] = [];
-    for (const id of nodeIds) {
-      const node = documentStore.getNode(id);
-      if (!node || node.rotation === target) continue;
-      const frame = computeWorldFrame(node, entityStore.getWorldTransform(id)!);
-      transforms.push({ id, frame: { ...frame, rotation: frame.rotation + target - node.rotation } });
-    }
-    documentStore.transformNodes(transforms, { label: '设置旋转角度', ...options });
+    this.geometryEdits ??= new GeometryEditSession(this.engine);
+    this.geometryEdits.rotate(nodeIds, rotation, { label: '设置旋转角度', ...options });
+  }
+
+  /** 面板失焦或关闭时释放本次数值编辑快照；旧面板不能结束其他分组。 */
+  endGeometryEdit(groupId?: string): void {
+    this.geometryEdits?.end(groupId);
   }
 
   /** 绕选中节点整体中心增量旋转 (如顺时针 90°)，与拖动旋转控制柄结果一致 */

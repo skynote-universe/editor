@@ -49,13 +49,29 @@ export type {
   VerticalAlign,
   ViewportState
 } from '@skynote/core';
-export { STICKY_COLORS, STICKY_DEFAULT_SIZE, isFormatActive } from '@skynote/plugins-basic';
+export {
+  STICKY_COLORS,
+  STICKY_DEFAULT_SIZE,
+  STACK_LAYOUT_ID,
+  compactStackPadding,
+  isFormatActive,
+  parseStackLayoutOptions,
+  parseStackPaddingBox
+} from '@skynote/plugins-basic';
 export type {
   ConnectNodeRequest,
   ConnectorDropEvent,
   StickyColor,
   ImageCreateOptions,
   ImageNodeFields,
+  StackAlign,
+  StackJustify,
+  StackDirection,
+  StackLayoutOptions,
+  StackPadding,
+  StackPaddingBox,
+  StackPaddingInput,
+  StackSizing,
   TextEditPlugin,
   TextFormat,
   TextFormatState
