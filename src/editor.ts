@@ -26,6 +26,7 @@ import {
   resolveThemeColor,
   screenToWorld,
   splitStyleAlpha,
+  SyntheticPointerEvent,
   unionBounds,
   worldToScreen,
   type CanvasDocument,
@@ -453,6 +454,14 @@ export class SkyNoteEditor<TContainer = unknown> {
 
   getConnector(id: string): Readonly<ConnectorEntity> | undefined {
     return this.engine.documentStore.getConnector(id);
+  }
+
+  /**
+   * 画布右键：先交给插件 (如右键取消正在绘制的笔迹或路径)
+   * @returns true 表示已被插件消费，宿主不应弹出右键菜单
+   */
+  dispatchContextMenu(point: Point): boolean {
+    return this.engine.pointer.dispatchContextMenu(new SyntheticPointerEvent({ point, button: 2 }));
   }
 
   /** 连线的生效样式 (线型默认样式 < 连线自身样式)，面板显示的值即画出的值 */
