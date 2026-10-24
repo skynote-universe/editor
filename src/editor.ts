@@ -775,14 +775,21 @@ export class SkyNoteEditor<TContainer = unknown> {
     }
   }
 
-  /** 宿主确认后可接受媒体问题；结构解析与事务守卫始终执行。 */
-  importDocument(value: unknown, options?: { allowAssetIssues?: boolean }): ParseResult<void> {
+  /**
+   * 以一步可撤销的事务替换整个文档；宿主确认后可接受媒体问题，结构解析与事务守卫始终执行。
+   * label 为撤销记录的名称 (缺省「导入文档」，如恢复历史版本时传「恢复历史版本」)
+   */
+  importDocument(value: unknown, options?: { allowAssetIssues?: boolean; label?: string }): ParseResult<void> {
     const prepared = this.prepareDocumentImport(value);
     if (!prepared.ok) return prepared;
     if (prepared.value.issues.length && !options?.allowAssetIssues)
       return { ok: false, error: prepared.value.issues[0].detail };
     const doc = prepared.value.document;
-    const record = this.engine.documentStore.replaceContent(doc.content, { label: '导入文档' }, doc.assets ?? {});
+    const record = this.engine.documentStore.replaceContent(
+      doc.content,
+      { label: options?.label ?? '导入文档' },
+      doc.assets ?? {}
+    );
     if (!record) return { ok: false, error: '文档结构或事务校验失败，未导入' };
     return { ok: true, value: undefined };
   }
