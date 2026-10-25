@@ -348,6 +348,12 @@ export class SkyNoteEditor<TContainer = unknown> {
     this.engine.session.fitBounds(this.engine.spatialIndex.getContentBounds());
   }
 
+  /** 缩放并平移视口以容纳指定的节点与连线 (如在画布上定位某张图片的所有用处)；都不存在时不动 */
+  fitEntities(refs: EntityRefs): void {
+    const bounds = this.getEntitiesBounds(refs);
+    if (bounds) this.engine.session.fitBounds(bounds);
+  }
+
   // ==================== 主题 ====================
 
   get theme(): CanvasTheme {

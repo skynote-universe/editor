@@ -249,6 +249,15 @@ describe('SkyNoteEditor', () => {
     expect((node.x + node.width / 2) * zoom + x).toBeCloseTo(500);
     expect((node.y + node.height / 2) * zoom + y).toBeCloseTo(400);
 
+    // 只容纳指定节点：远处另有节点时视口仍以该节点为中心
+    engine.documentStore.createNode({ nodeType: 'sticky', x: 9000, y: 9000 });
+    engine.session.setViewport({ x: -5000, y: 3000 });
+    editor.fitEntities({ nodeIds: [id] });
+    const fitted = engine.session.viewport;
+    expect((node.x + node.width / 2) * fitted.zoom + fitted.x).toBeCloseTo(500);
+    expect((node.y + node.height / 2) * fitted.zoom + fitted.y).toBeCloseTo(400);
+    engine.documentStore.undo();
+
     engine.documentStore.undo();
     expect(engine.documentStore.getNode(id)).toBeUndefined();
 
