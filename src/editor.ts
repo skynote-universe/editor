@@ -16,6 +16,8 @@ import {
   SkyNoteEngine,
   compactCornerRadius,
   clonePlainData,
+  clamp,
+  computeFitViewport,
   inspectDocumentAssets,
   type DocumentAssetInspection,
   expandCornerRadius,
@@ -84,6 +86,14 @@ import {
 } from '@skynote/plugins-basic';
 import { GeometryEditSession } from './geometry-edit-session';
 
+/** 文档打开策略：适配内容、100% 居中、保留宿主传入的视口。 */
+export type InitialViewMode = 'fit-content' | 'actual-size' | 'preserve';
+
+/** 本次文档恢复的视口策略；缺省沿用编辑器配置。 */
+export interface DocumentRestoreOptions {
+  initialView?: InitialViewMode;
+}
+
 export interface SkyNoteEditorOptions<TContainer> extends Omit<SkyNoteEngineOptions, 'fonts'> {
   /** 渲染适配器 (如 @skynote/renderer-leafer 的 LeaferAdapter) */
   renderer: RenderAdapter<TContainer>;
@@ -91,6 +101,8 @@ export interface SkyNoteEditorOptions<TContainer> extends Omit<SkyNoteEngineOpti
   plugins?: readonly SkyNotePlugin[];
   /** 是否以只读浏览模式初始化 (默认 false) */
   readOnly?: boolean;
+  /** 文档打开策略，默认 actual-size；首次挂载及成功恢复、导入文档后自动应用。 */
+  initialView?: InitialViewMode;
 }
 
 /** 在视口中心新建节点的请求：位置由视口决定；按已登记的节点类型逐一推导 options 的类型 */
@@ -129,9 +141,13 @@ export class SkyNoteEditor<TContainer = unknown> {
   private readonly imageListeners = new Set<() => void>();
   private readonly assetDisposers: (() => void)[] = [];
   private geometryEdits?: GeometryEditSession;
+  private readonly initialView: InitialViewMode;
+  private pendingInitialView: InitialViewMode | undefined;
 
   constructor(options: SkyNoteEditorOptions<TContainer>) {
-    const { renderer, plugins = [], readOnly = false, ...engineOptions } = options;
+    const { renderer, plugins = [], readOnly = false, initialView = 'actual-size', ...engineOptions } = options;
+    this.initialView = initialView;
+    this.pendingInitialView = initialView;
     this.adapter = renderer;
     this.engine = new SkyNoteEngine({ ...engineOptions, fonts: renderer.fonts })
       .use(new BasicNodesPlugin())
@@ -186,6 +202,10 @@ export class SkyNoteEditor<TContainer = unknown> {
   mount(container: TContainer): void {
     this.unmount();
     this.renderer = this.adapter.mount(this.engine, container);
+    if (this.pendingInitialView !== undefined) {
+      this.applyInitialView(this.pendingInitialView);
+      this.pendingInitialView = undefined;
+    }
     this.imageSubscription = this.renderer.images?.subscribe(() => this.notifyImageLoadChange());
     this.notifyImageLoadChange();
   }
@@ -341,6 +361,30 @@ export class SkyNoteEditor<TContainer = unknown> {
   /** 以指定屏幕点为中心按倍数缩放 (缺省以视口中心) */
   zoomAt(factor: number, center?: Point): void {
     this.engine.session.zoomAt(factor, center);
+  }
+
+  /** 内容恢复且容器尺寸就绪后应用打开策略；preserve 的 viewport 由宿主单独存取，不进入文档实体。 */
+  applyInitialView(mode: InitialViewMode = this.initialView, viewport?: Partial<ViewportState>): void {
+    const session = this.engine.session;
+    switch (mode) {
+      case 'preserve':
+        if (viewport) session.setViewport(viewport);
+        return;
+      case 'fit-content':
+        this.fitContent();
+        return;
+      case 'actual-size': {
+        const zoom = clamp(1, session.zoomRange.min, session.zoomRange.max);
+        session.setViewport(
+          computeFitViewport(
+            this.engine.spatialIndex.getContentBounds(),
+            this.viewportSize,
+            { ...this.viewport, zoom },
+            { padding: 0, minZoom: zoom, maxZoom: zoom }
+          )
+        );
+      }
+    }
   }
 
   /** 缩放并平移视口以容纳全部内容 (内容很少时不超过原始尺寸，空画布回到原点) */
@@ -797,18 +841,33 @@ export class SkyNoteEditor<TContainer = unknown> {
       doc.assets ?? {}
     );
     if (!record) return { ok: false, error: '文档结构或事务校验失败，未导入' };
+    this.applyDocumentInitialView();
     return { ok: true, value: undefined };
   }
 
   /** 从本地存储恢复文档 (须先经 parseCanvasDocument 校验)：不进撤销栈，并清空撤销历史 */
-  restoreDocument(doc: CanvasDocument): void {
-    this.engine.documentStore.replaceContent(doc.content, { undoable: false }, doc.assets ?? {});
+  restoreDocument(doc: CanvasDocument, options?: DocumentRestoreOptions): ParseResult<void> {
+    const record = this.engine.documentStore.replaceContent(doc.content, { undoable: false }, doc.assets ?? {});
+    if (!record) return { ok: false, error: '当前事务或文档结构不允许恢复' };
     this.engine.documentStore.clearHistory();
+    this.applyDocumentInitialView(options?.initialView);
+    return { ok: true, value: undefined };
   }
 
   /** 宿主显式恢复完整检查点；不等同于普通可撤销文件导入。 */
-  restoreRecovery(document: unknown, history: unknown): ParseResult<void> {
-    return this.engine.documentStore.restoreRecovery(document, history);
+  restoreRecovery(document: unknown, history: unknown, options?: DocumentRestoreOptions): ParseResult<void> {
+    const result = this.engine.documentStore.restoreRecovery(document, history);
+    if (result.ok) this.applyDocumentInitialView(options?.initialView);
+    return result;
+  }
+
+  /** 未挂载时延迟到容器尺寸就绪，避免使用零尺寸计算打开视口。 */
+  private applyDocumentInitialView(mode: InitialViewMode = this.initialView): void {
+    this.pendingInitialView = mode;
+    if (this.renderer) {
+      this.applyInitialView(mode);
+      this.pendingInitialView = undefined;
+    }
   }
 
   // ==================== 撤销与重做 ====================

@@ -52,13 +52,48 @@ editor.destroy();
 | 生命周期 | `mount(container)`、`unmount()`、`destroy()` |
 | 新建与编辑 | `insertNodeAtViewportCenter()`、`insertNodeAt()`、`updateNodeStyle()`、`setNodeSize()`、`setLocked()`、`moveNodeLayers()`、`deleteEntities()` |
 | 连线 | `startConnectorTool(type)`、`updateConnectorStyle()`、`setConnectorType()`、`connectNewNode()` |
-| 选区与视口 | `select()`、`selectAll()`、`zoomAt()`、`fitContent()`、`screenToWorld()`、`worldToScreen()` |
+| 选区与视口 | `select()`、`selectAll()`、`zoomAt()`、`applyInitialView()`、`fitContent()`、`screenToWorld()`、`worldToScreen()` |
 | 文档 | `exportDocument()`、`importDocument()`、`restoreDocument()`、`undo()`、`redo()` |
 | 事件 | `onSelectionChange`、`onDocumentChange`、`onCommit`、`onViewportChange`、`onHistoryChange`、`onToolChange` |
 | 外观 | `setTheme()`、`resolveColor()`、`registerCursor()`、`setCursorStyle()` |
 | 扩展 | 构造参数 `plugins`、`registerInputScope()`、`engine` (底层引擎) |
 
 `onCommit` 按提交顺序给出每次修改的正向补丁，可直接用于增量保存或协同同步。
+
+### 文档打开视口策略
+
+构造参数 `initialView` 支持三种模式，首次 `mount()` 在容器尺寸就绪后自动应用：
+
+| 模式 | 行为 |
+| --- | --- |
+| `fit-content` | 自动缩放并居中，以容纳全部内容 |
+| `actual-size`（默认） | 100% 显示并居中，缩放仍受 `zoomRange` 约束 |
+| `preserve` | 原样保留 `initialViewport` 的缩放和平移；未传入时为原点、100% |
+
+```ts
+const editor = new SkyNoteEditor({
+  renderer,
+  initialView: 'preserve',
+  initialViewport: savedViewport
+});
+editor.mount(container);
+
+// 异步恢复文档后自动应用配置策略。
+editor.restoreDocument(document);
+
+// 接管同一文档等刷新内容场景，保留当前视口，不触发默认居中。
+editor.restoreDocument(document, { initialView: 'preserve' });
+editor.restoreRecovery(document, savedHistory, { initialView: 'preserve' });
+
+// 也可逐份文档指定策略和原样视口。
+editor.applyInitialView('fit-content');
+editor.applyInitialView('actual-size');
+editor.applyInitialView('preserve', savedViewport);
+```
+
+视口属于会话状态，`CanvasDocument` 不包含视口字段，宿主须单独存取并传入。重新挂载不会再次自动应用策略，避免覆盖用户已经调整的视口；`restoreDocument()`、成功的 `restoreRecovery()` 和 `importDocument()` 自动应用策略，未挂载时延迟至下次挂载；普通编辑不触发。`applyInitialView()` 仅用于手动覆盖。`preserve` 未另传视口时保持当前视口。策略不会写入文档或撤销记录。
+
+`restoreDocument()` 返回 `ParseResult<void>`。事务拒绝恢复时返回失败，保留当前文档、撤销历史和视口；宿主应检查 `result.ok` 后再完成文档相关的界面切换。
 
 ## 快捷键
 

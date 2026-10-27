@@ -44,6 +44,196 @@ class FakeAdapter implements RenderAdapter<FakeContainer> {
   }
 }
 
+describe('文档打开视口策略', () => {
+  it('事务拒绝恢复时返回失败，保留文档、撤销栈及手动视口', () => {
+    const editor = new SkyNoteEditor({ renderer: new FakeAdapter() });
+    editor.createNode({ nodeType: 'shape', x: 100, y: 200 });
+    editor.mount({ width: 1000, height: 800 });
+    const manual = { x: 123, y: -456, zoom: 0.75 };
+    editor.applyInitialView('preserve', manual);
+    const document = editor.exportDocument();
+    const history = editor.getHistorySnapshot();
+    const resume = editor.engine.documentStore.suspendWrites();
+    try {
+      const incoming = structuredClone(document);
+      incoming.content.nodes = {};
+      expect(editor.restoreDocument(incoming).ok).toBe(false);
+      expect(editor.exportDocument()).toEqual(document);
+      expect(editor.getHistorySnapshot()).toEqual(history);
+      expect(editor.viewport).toEqual(manual);
+      resume();
+      expect(editor.restoreDocument(incoming).ok).toBe(true);
+      expect(editor.canUndo).toBe(false);
+      expect(editor.viewport).toEqual({ x: 0, y: 0, zoom: 1 });
+    } finally {
+      resume();
+      editor.destroy();
+    }
+  });
+
+  it.each(['fit-content', 'actual-size', 'preserve'] as const)(
+    '本次恢复可以覆盖为%s，未挂载时也使用本次策略且不改变默认配置',
+    (mode) => {
+      const editor = new SkyNoteEditor({ renderer: new FakeAdapter() });
+      editor.engine.documentStore.createNode({ nodeType: 'shape', x: 100, y: 200, width: 4000, height: 2000 });
+      const document = editor.exportDocument();
+      const history = editor.getHistorySnapshot();
+      const manual = { x: 70, y: 80, zoom: 1.5 };
+      try {
+        editor.applyInitialView('preserve', manual);
+        editor.restoreDocument(document, { initialView: mode });
+        editor.mount({ width: 1000, height: 800 });
+        expect(editor.viewport.zoom).toBeCloseTo(mode === 'preserve' ? 1.5 : mode === 'fit-content' ? 0.21 : 1);
+        if (mode === 'preserve') expect(editor.viewport).toEqual(manual);
+        editor.applyInitialView('preserve', manual);
+        expect(editor.restoreRecovery(document, history, { initialView: mode }).ok).toBe(true);
+        expect(editor.viewport.zoom).toBeCloseTo(mode === 'preserve' ? 1.5 : mode === 'fit-content' ? 0.21 : 1);
+        editor.restoreDocument(document);
+        expect(editor.viewport.zoom).toBe(1);
+      } finally {
+        editor.destroy();
+      }
+    }
+  );
+
+  it.each(['restoreDocument', 'importDocument', 'restoreRecovery'] as const)(
+    '%s自动应用默认100%%，普通编辑及失败导入保留手动视口',
+    (method) => {
+      const editor = new SkyNoteEditor({ renderer: new FakeAdapter() });
+      editor.engine.documentStore.createNode({ nodeType: 'shape', x: 100, y: 200, width: 4000, height: 2000 });
+      const document = editor.exportDocument();
+      const history = editor.getHistorySnapshot();
+      try {
+        editor.mount({ width: 1000, height: 800 });
+        editor.applyInitialView('preserve', { x: 70, y: 80, zoom: 1.5 });
+        if (method === 'restoreRecovery') expect(editor.restoreRecovery(document, history).ok).toBe(true);
+        else if (method === 'importDocument') expect(editor.importDocument(document).ok).toBe(true);
+        else editor.restoreDocument(document);
+        expect(editor.viewport).toEqual({ x: -1600, y: -800, zoom: 1 });
+
+        const manual = { x: 70, y: 80, zoom: 1.5 };
+        editor.applyInitialView('preserve', manual);
+        editor.engine.documentStore.createNode({ nodeType: 'shape', x: 9000, y: 9000 });
+        expect(editor.importDocument(null).ok).toBe(false);
+        expect(editor.restoreRecovery(null, null).ok).toBe(false);
+        expect(editor.viewport).toEqual(manual);
+
+        editor.unmount();
+        if (method === 'restoreRecovery') expect(editor.restoreRecovery(document, history).ok).toBe(true);
+        else if (method === 'importDocument') expect(editor.importDocument(document).ok).toBe(true);
+        else editor.restoreDocument(document);
+        expect(editor.viewport).toEqual(manual);
+        editor.mount({ width: 600, height: 400 });
+        expect(editor.viewport).toEqual({ x: -1800, y: -1000, zoom: 1 });
+      } finally {
+        editor.destroy();
+      }
+    }
+  );
+
+  it.each(['fit-content', 'actual-size', 'preserve'] as const)('%s在首次挂载应用，且不修改文档或撤销记录', (mode) => {
+    const saved = { x: 123, y: -321, zoom: 0.6 };
+    const editor = new SkyNoteEditor({ renderer: new FakeAdapter(), initialView: mode, initialViewport: saved });
+    editor.engine.documentStore.createNode({ nodeType: 'shape', x: 100, y: 200, width: 4000, height: 2000 });
+    const document = editor.exportDocument();
+    const history = editor.getHistorySnapshot();
+    const commit = vi.fn();
+    const stop = editor.onCommit(commit);
+    try {
+      editor.mount({ width: 1000, height: 800 });
+      if (mode === 'preserve') expect(editor.viewport).toEqual(saved);
+      else {
+        const bounds = editor.engine.spatialIndex.getContentBounds()!;
+        expect(editor.viewport.zoom).toBeCloseTo(mode === 'actual-size' ? 1 : 0.21);
+        expect(
+          editor.worldToScreen({ x: (bounds.left + bounds.right) / 2, y: (bounds.top + bounds.bottom) / 2 })
+        ).toEqual({ x: 500, y: 400 });
+      }
+      expect(editor.exportDocument()).toEqual(document);
+      expect(editor.getHistorySnapshot()).toEqual(history);
+      expect(commit).not.toHaveBeenCalled();
+    } finally {
+      stop();
+      editor.destroy();
+    }
+  });
+
+  it('异步恢复文档后自动应用配置策略，或使用传入视口原样恢复', () => {
+    const editor = new SkyNoteEditor({ renderer: new FakeAdapter(), initialView: 'fit-content' });
+    try {
+      editor.mount({ width: 1000, height: 800 });
+      const document = editor.exportDocument();
+      document.content.nodes.wide = {
+        id: 'wide',
+        type: 'node',
+        nodeType: 'shape',
+        x: 0,
+        y: 0,
+        width: 4000,
+        height: 2000,
+        rotation: 0,
+        zIndex: 'a0',
+        locked: false
+      };
+      editor.restoreDocument(document);
+      expect(editor.viewport.zoom).toBeCloseTo(0.21);
+      editor.applyInitialView('actual-size');
+      expect(editor.viewport.zoom).toBe(1);
+      const saved = { x: -210, y: 84, zoom: 0.75 };
+      editor.applyInitialView('preserve', saved);
+      expect(editor.viewport).toEqual(saved);
+      saved.x = 999;
+      expect(editor.viewport.x).toBe(-210);
+    } finally {
+      editor.destroy();
+    }
+  });
+
+  it.each([undefined, 'fit-content', 'actual-size'] as const)('%s策略下重新挂载不覆盖手动视口', (mode) => {
+    const saved = { x: 100, y: -40, zoom: 0.8 };
+    const editor = new SkyNoteEditor({ renderer: new FakeAdapter(), initialView: mode, initialViewport: saved });
+    try {
+      editor.mount({ width: 1000, height: 800 });
+      if (mode === undefined) expect(editor.viewport).toEqual({ x: 0, y: 0, zoom: 1 });
+      editor.applyInitialView('preserve', { x: 70, y: 80, zoom: 1.5 });
+      editor.mount({ width: 600, height: 400 });
+      expect(editor.viewport).toEqual({ x: 70, y: 80, zoom: 1.5 });
+    } finally {
+      editor.destroy();
+    }
+  });
+
+  it.each(['fit-content', 'actual-size', 'preserve'] as const)('空文档%s策略有明确的默认视口', (mode) => {
+    const saved = { x: 10, y: 20, zoom: 0.5 };
+    const editor = new SkyNoteEditor({ renderer: new FakeAdapter(), initialView: mode, initialViewport: saved });
+    try {
+      editor.mount({ width: 1000, height: 800 });
+      expect(editor.viewport).toEqual(mode === 'preserve' ? saved : { x: 0, y: 0, zoom: 1 });
+    } finally {
+      editor.destroy();
+    }
+  });
+
+  it('原始大小遵循自定义缩放范围，并在有效缩放比例下居中', () => {
+    const editor = new SkyNoteEditor({
+      renderer: new FakeAdapter(),
+      initialView: 'actual-size',
+      zoomRange: { min: 2, max: 4 }
+    });
+    editor.engine.documentStore.createNode({ nodeType: 'shape', x: 100, y: 200, width: 4000, height: 2000 });
+    try {
+      editor.mount({ width: 1000, height: 800 });
+      const bounds = editor.engine.spatialIndex.getContentBounds()!;
+      expect(editor.viewport.zoom).toBe(2);
+      expect(
+        editor.worldToScreen({ x: (bounds.left + bounds.right) / 2, y: (bounds.top + bounds.bottom) / 2 })
+      ).toEqual({ x: 500, y: 400 });
+    } finally {
+      editor.destroy();
+    }
+  });
+});
+
 describe('图片成功结果与选区意图', () => {
   it('历史门面返回完整隔离副本，撤销后重做资产仍可观察', () => {
     const editor = new SkyNoteEditor({ renderer: new FakeAdapter() });
