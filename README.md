@@ -58,6 +58,30 @@ editor.destroy();
 | 外观 | `setTheme()`、`resolveColor()`、`registerCursor()`、`setCursorStyle()` |
 | 扩展 | 构造参数 `plugins`、`registerInputScope()`、`engine` (底层引擎) |
 
+### 内容查询与 PNG 导出
+
+`getNodes()`、`getConnectors()` 用于低频全量查询；持续观察使用 `onDocumentChange()` 的结构化增量，避免拖动时反复枚举全表。`getNodeTypeLabel()` 提供已注册节点类型的显示名称。
+
+`revealEntities()` 保持缩放，仅按需平移；可指定居中与面板遮挡边距。`previewEntities()` 提供独立的临时高亮，返回清理函数，不修改选区或文档。`getPngExportInfo()` 查询导出范围和输出尺寸，并复用实际导出的像素预算校验。
+
+`documentName` 只读取当前文档名称，不创建副本；`exportDocument()` 用于确实需要完整文档副本的导出或快照场景。
+
+`exportPng()`为PNG便捷入口，底层委托渲染器通用的`export({ format: 'png', ... })`；自定义渲染器提供该能力时应通过`exportFormats`声明支持的格式，`canExportPng`仅在包含png时为true。Core协议使用CanvasExportRequest/CanvasExportResult，不将结果MIME限定为PNG。
+
+```ts
+if (editor.canExportPng) {
+  const image = await editor.exportPng({
+    scope: 'content', // 或selection：当前选区覆盖的画布区域，包含重叠内容
+    scale: 1,
+    background: 'canvas', // 或transparent
+    signal: controller.signal
+  });
+  // image.data为Uint8Array，宿主负责下载/写文件；内核不依赖Blob或DOM。
+}
+```
+
+导出能力由渲染器可选实现，包含离屏内容且不绘制选框等覆盖层。导出期间暂时暂停文档事务并保护资产，成功、失败或取消后释放；卸载自动取消。默认四周留16个世界单位边距；单边最多8192像素、总计最多16777216像素，超过预算需降低倍率或缩小选区。
+
 `onCommit` 按提交顺序给出每次修改的正向补丁，可直接用于增量保存或协同同步。
 
 ### 文档打开视口策略

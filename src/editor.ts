@@ -37,6 +37,8 @@ import {
   type CanvasPatch,
   type CanvasOperationRecord,
   type CanvasRenderer,
+  type CanvasExportResult,
+  type AssetProtectionLease,
   type CanvasHistorySnapshot,
   type ImageLoadState,
   type CanvasTheme,
@@ -143,6 +145,8 @@ export class SkyNoteEditor<TContainer = unknown> {
   private geometryEdits?: GeometryEditSession;
   private readonly initialView: InitialViewMode;
   private pendingInitialView: InitialViewMode | undefined;
+  private imageExport: AbortController | undefined;
+  private previewSequence = 0;
 
   constructor(options: SkyNoteEditorOptions<TContainer>) {
     const { renderer, plugins = [], readOnly = false, initialView = 'actual-size', ...engineOptions } = options;
@@ -212,6 +216,7 @@ export class SkyNoteEditor<TContainer = unknown> {
 
   /** 从容器卸载渲染器；引擎与文档保留 */
   unmount(): void {
+    this.imageExport?.abort();
     this.geometryEdits?.end();
     this.imageSubscription?.();
     this.imageSubscription = undefined;
@@ -398,6 +403,165 @@ export class SkyNoteEditor<TContainer = unknown> {
     if (bounds) this.engine.session.fitBounds(bounds);
   }
 
+  get canExportPng(): boolean {
+    return !!this.renderer?.export && this.renderer.exportFormats?.includes('png') === true;
+  }
+
+  /** 保持缩放揭示目标；center明确居中，否则只平移屏幕外目标。insets为宿主面板占用的屏幕像素。 */
+  revealEntities(
+    refs: EntityRefs,
+    options: {
+      center?: boolean;
+      padding?: number;
+      insets?: Partial<{ left: number; right: number; top: number; bottom: number }>;
+    } = {}
+  ): void {
+    const bounds = this.getEntitiesBounds(refs);
+    if (!bounds) return;
+    const { width, height } = this.viewportSize;
+    const pad = options.padding ?? 24;
+    const left = (options.insets?.left ?? 0) + pad;
+    const right = width - (options.insets?.right ?? 0) - pad;
+    const top = (options.insets?.top ?? 0) + pad;
+    const bottom = height - (options.insets?.bottom ?? 0) - pad;
+    if (right <= left || bottom <= top) return;
+    const viewport = this.viewport;
+    const shift = (a: number, b: number, low: number, high: number): number => {
+      if (options.center || b - a > high - low) return (low + high - a - b) / 2;
+      return a < low ? low - a : b > high ? high - b : 0;
+    };
+    const dx = shift(bounds.left * viewport.zoom + viewport.x, bounds.right * viewport.zoom + viewport.x, left, right);
+    const dy = shift(bounds.top * viewport.zoom + viewport.y, bounds.bottom * viewport.zoom + viewport.y, top, bottom);
+    if (dx || dy) this.engine.session.setViewport({ x: viewport.x + dx, y: viewport.y + dy });
+  }
+
+  /** 瞬态预览框，与选区及文档无关；调用方关闭面板或改选时释放。 */
+  previewEntities(refs: EntityRefs): () => void {
+    const channel = 'editor:preview:' + ++this.previewSequence;
+    const nodes = new Set(refs.nodeIds ?? []);
+    const connectors = new Set(refs.connectorIds ?? []);
+    const draw = () => {
+      const bounds = this.getEntitiesBounds(refs);
+      if (!bounds) {
+        this.engine.host.overlay.clear(channel);
+        return;
+      }
+      const gap = 4 / this.viewport.zoom;
+      this.engine.host.overlay.setPrimitives(
+        channel,
+        [
+          {
+            kind: 'rect',
+            x: bounds.left - gap,
+            y: bounds.top - gap,
+            width: bounds.right - bounds.left + gap * 2,
+            height: bounds.bottom - bounds.top + gap * 2,
+            stroke: this.theme.accent,
+            strokeWidth: 2 / this.viewport.zoom
+          }
+        ],
+        { transient: true }
+      );
+    };
+    draw();
+    const stopDocument = this.onDocumentChange((change) => {
+      if (
+        change.contentReplaced ||
+        [...nodes].some((id) => change.nodes.worldGeometry.has(id) || change.nodes.removed.has(id)) ||
+        [...connectors].some((id) => change.connectors.geometry.has(id) || change.connectors.removed.has(id))
+      )
+        draw();
+    });
+    const stopSession = this.engine.session.subscribe((change) => {
+      if (change.viewportChanged || change.themeChanged) draw();
+    });
+    return () => {
+      stopDocument();
+      stopSession();
+      this.engine.host.overlay.clear(channel);
+    };
+  }
+
+  /** 与导出共用的尺寸及预算计算，供宿主在生成前显示真实输出尺寸。 */
+  getPngExportInfo(options: { scope?: 'content' | 'selection'; scale?: number } = {}): {
+    bounds: RectBounds;
+    width: number;
+    height: number;
+  } {
+    const content =
+      options.scope === 'selection'
+        ? this.getEntitiesBounds({ nodeIds: [...this.selectedNodeIds], connectorIds: [...this.selectedConnectorIds] })
+        : this.getEntitiesBounds({
+            nodeIds: this.getNodes().map((node) => node.id),
+            connectorIds: this.getConnectors().map((connector) => connector.id)
+          });
+    if (!content) throw new Error(options.scope === 'selection' ? '请先选择要导出的内容' : '画布没有可导出的内容');
+    const bounds = {
+      left: content.left - 16,
+      top: content.top - 16,
+      right: content.right + 16,
+      bottom: content.bottom + 16
+    };
+    const scale = options.scale ?? 1;
+    const width = Math.ceil((bounds.right - bounds.left) * scale);
+    const height = Math.ceil((bounds.bottom - bounds.top) * scale);
+    if (
+      !Number.isFinite(scale) ||
+      scale < 0.25 ||
+      scale > 4 ||
+      width > 8192 ||
+      height > 8192 ||
+      width * height > 16_777_216
+    )
+      throw new Error('导出尺寸过大，请缩小范围或降低倍率（最多1600万像素）');
+    return { bounds, width, height };
+  }
+
+  /** 导出全部内容或当前选区覆盖的画布范围；不修改视口、选区或撤销历史。 */
+  async exportPng(
+    options: {
+      scope?: 'content' | 'selection';
+      scale?: number;
+      background?: 'transparent' | 'canvas';
+      signal?: AbortSignal;
+    } = {}
+  ): Promise<CanvasExportResult> {
+    const renderer = this.renderer;
+    if (!renderer?.export || !renderer.exportFormats?.includes('png')) throw new Error('当前渲染器不支持PNG导出');
+    if (this.imageExport) throw new Error('正在导出，请等待完成');
+    const scale = options.scale ?? 1;
+    const { bounds } = this.getPngExportInfo(options);
+    const controller = new AbortController();
+    this.imageExport = controller;
+    const cancel = () => controller.abort();
+    options.signal?.addEventListener('abort', cancel, { once: true });
+    if (options.signal?.aborted) controller.abort();
+    const resume = this.engine.documentStore.suspendWrites();
+    let protection: AssetProtectionLease | undefined;
+    try {
+      controller.signal.throwIfAborted();
+      protection = await this.engine.assets?.protect?.({ purpose: 'export', signal: controller.signal });
+      controller.signal.throwIfAborted();
+      const result = await renderer.export({
+        format: 'png',
+        bounds,
+        scale,
+        background: options.background ?? 'canvas',
+        signal: controller.signal
+      });
+      controller.signal.throwIfAborted();
+      return result;
+    } finally {
+      try {
+        protection?.release();
+      } finally {
+        resume();
+        options.signal?.removeEventListener('abort', cancel);
+        this.imageExport = undefined;
+      }
+    }
+  }
+
   // ==================== 主题 ====================
 
   get theme(): CanvasTheme {
@@ -485,6 +649,19 @@ export class SkyNoteEditor<TContainer = unknown> {
 
   getNode(id: string): Readonly<NodeEntity> | undefined {
     return this.engine.documentStore.getNode(id);
+  }
+
+  /** 低频全量查询；持续观察应使用onDocumentChange消费增量。 */
+  getNodes(): readonly Readonly<NodeEntity>[] {
+    return this.engine.entityStore.getAllNodes().map(({ entity }) => entity);
+  }
+
+  getConnectors(): readonly Readonly<ConnectorEntity>[] {
+    return this.engine.entityStore.getAllConnectors().map(({ entity }) => entity);
+  }
+
+  getNodeTypeLabel(nodeType: string): string {
+    return this.engine.nodeTypes.get(nodeType)?.label ?? nodeType;
   }
 
   /** 容器的直接子节点；parentId 缺省为根层级 */
@@ -805,6 +982,11 @@ export class SkyNoteEditor<TContainer = unknown> {
   }
 
   // ==================== 文档导出、导入与恢复 ====================
+
+  /** 文档名称的只读查询，不创建完整文档副本。 */
+  get documentName(): string {
+    return this.engine.documentStore.getView().name;
+  }
 
   /** 当前文档的完整副本 (可直接 JSON 序列化) */
   exportDocument(): CanvasDocument {
