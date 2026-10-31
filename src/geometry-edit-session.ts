@@ -50,6 +50,7 @@ export class GeometryEditSession {
           change.readOnlyChanged ||
           change.textEditingChanged ||
           change.toggledNodeIds.size ||
+          change.selectionScopeChanged ||
           change.toggledConnectorIds.size
         )
           this.end();

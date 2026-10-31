@@ -54,6 +54,10 @@ import {
   type CursorDefinition,
   type CursorStyle,
   type LayerMove,
+  type NodeAlignment,
+  type NodeDistributionAxis,
+  type NodeArrangementInfo,
+  type NodeAutoArrangeOptions,
   type NodeCreateOptionsMap,
   type NodeEntity,
   type NodeResizeAxes,
@@ -273,7 +277,8 @@ export class SkyNoteEditor<TContainer = unknown> {
   /** 选中的节点或连线变化 */
   onSelectionChange(listener: () => void): () => void {
     return this.engine.session.subscribe((change) => {
-      if (change.toggledNodeIds.size > 0 || change.toggledConnectorIds.size > 0) listener();
+      if (change.selectionScopeChanged || change.toggledNodeIds.size > 0 || change.toggledConnectorIds.size > 0)
+        listener();
     });
   }
 
@@ -632,15 +637,30 @@ export class SkyNoteEditor<TContainer = unknown> {
 
   /** 选中指定节点与连线 (替换原选区) */
   select(nodeIds: readonly string[], connectorIds: readonly string[] = []): void {
-    this.engine.session.setSelection({ nodeIds, connectorIds });
+    this.engine.session.setSelection({
+      nodeIds: nodeIds.length + connectorIds.length > 1 ? nodeIds.filter((id) => !this.getNode(id)?.locked) : nodeIds,
+      connectorIds
+    });
+  }
+
+  get selectedSubtreeNodeIds(): ReadonlySet<string> {
+    return this.engine.session.selectedSubtreeNodeIds;
+  }
+
+  /** 选择布局公开的整体，实际文档操作仍以根节点为入口。 */
+  selectSubtree(rootId: string): void {
+    if (!this.engine.documentStore.selectionGeometry.canSelectSubtree(rootId)) return;
+    this.engine.session.setSelection({ nodeIds: [rootId], subtreeNodeIds: [rootId], connectorIds: [] });
   }
 
   /** 选中根层级的全部节点 (后代随容器) 与全部连线 */
   selectAll(): void {
-    this.select(
-      this.getChildIds(),
-      this.engine.entityStore.getAllConnectors().map((runtime) => runtime.entity.id)
-    );
+    const nodeIds = this.getChildIds().filter((id) => !this.getNode(id)!.locked);
+    this.engine.session.setSelection({
+      nodeIds,
+      subtreeNodeIds: nodeIds.filter((id) => this.engine.documentStore.selectionGeometry.canSelectSubtree(id)),
+      connectorIds: this.engine.entityStore.getAllConnectors().map((runtime) => runtime.entity.id)
+    });
   }
 
   get nodeCount(): number {
@@ -706,7 +726,12 @@ export class SkyNoteEditor<TContainer = unknown> {
     const add = (b: RectBounds | undefined) => {
       if (b) bounds = bounds ? unionBounds(bounds, b) : b;
     };
-    for (const id of refs.nodeIds ?? []) add(this.engine.getNodeOccupiedBounds(id));
+    for (const id of refs.nodeIds ?? [])
+      add(
+        this.selectedSubtreeNodeIds.has(id)
+          ? this.engine.documentStore.selectionGeometry.getSubtreeBounds(id)
+          : this.engine.getNodeOccupiedBounds(id)
+      );
     for (const id of refs.connectorIds ?? []) add(this.engine.getConnectorRoute(id)?.bounds);
     return bounds;
   }
@@ -854,6 +879,31 @@ export class SkyNoteEditor<TContainer = unknown> {
     this.engine.documentStore.moveLayers(nodeIds, move);
   }
 
+  getNodeArrangementInfo(nodeIds: readonly string[]): NodeArrangementInfo {
+    return this.engine.documentStore.getNodeArrangementInfo(nodeIds);
+  }
+
+  /** 按世界外框对齐，位置取整；锁定或受自动布局控制时整体不执行。 */
+  alignNodes(nodeIds: readonly string[], alignment: NodeAlignment): void {
+    if (this.isReadOnly) return;
+    this.geometryEdits?.end();
+    this.engine.documentStore.alignNodes(nodeIds, alignment, { subtreeNodeIds: this.selectedSubtreeNodeIds });
+  }
+
+  /** 至少三个独立节点，固定两端并均分边缘间距，一步撤销。 */
+  distributeNodes(nodeIds: readonly string[], axis: NodeDistributionAxis): void {
+    if (this.isReadOnly) return;
+    this.geometryEdits?.end();
+    this.engine.documentStore.distributeNodes(nodeIds, axis, { subtreeNodeIds: this.selectedSubtreeNodeIds });
+  }
+
+  /** 单次整理为网格，保持尺寸和朝向，不改变父子关系，一步撤销。 */
+  autoArrangeNodes(nodeIds: readonly string[], options?: NodeAutoArrangeOptions): void {
+    if (this.isReadOnly) return;
+    this.geometryEdits?.end();
+    this.engine.documentStore.autoArrangeNodes(nodeIds, options, { subtreeNodeIds: this.selectedSubtreeNodeIds });
+  }
+
   /** 节点外框适应内容，已适应或不支持的节点跳过 */
   fitNodesContent(nodeIds: readonly string[]): void {
     this.engine.documentStore.fitContent(nodeIds);
@@ -879,7 +929,14 @@ export class SkyNoteEditor<TContainer = unknown> {
   /** 取消组合或解散含子节点的容器外壳，并选中释放出的子节点，一步撤销 */
   ungroupNodes(nodeIds: readonly string[]): string[] {
     const released = this.engine.documentStore.ungroupNodes(nodeIds);
-    if (released.length > 0) this.select(released);
+    if (released.length > 0) {
+      const selected = released.length > 1 ? released.filter((id) => !this.getNode(id)?.locked) : released;
+      this.engine.session.setSelection({
+        nodeIds: selected,
+        subtreeNodeIds: selected.filter((id) => this.engine.documentStore.selectionGeometry.canSelectSubtree(id)),
+        connectorIds: []
+      });
+    }
     return released;
   }
 
