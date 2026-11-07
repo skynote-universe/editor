@@ -637,9 +637,14 @@ export class SkyNoteEditor<TContainer = unknown> {
 
   /** 选中指定节点与连线 (替换原选区) */
   select(nodeIds: readonly string[], connectorIds: readonly string[] = []): void {
+    const visibleNodes = nodeIds.filter((id) => this.isNodeVisible(id));
+    const visibleConnectors = connectorIds.filter((id) => this.isConnectorVisible(id));
     this.engine.session.setSelection({
-      nodeIds: nodeIds.length + connectorIds.length > 1 ? nodeIds.filter((id) => !this.getNode(id)?.locked) : nodeIds,
-      connectorIds
+      nodeIds:
+        visibleNodes.length + visibleConnectors.length > 1
+          ? visibleNodes.filter((id) => !this.getNode(id)?.locked)
+          : visibleNodes,
+      connectorIds: visibleConnectors
     });
   }
 
@@ -659,12 +664,36 @@ export class SkyNoteEditor<TContainer = unknown> {
     this.engine.session.setSelection({
       nodeIds,
       subtreeNodeIds: nodeIds.filter((id) => this.engine.documentStore.selectionGeometry.canSelectSubtree(id)),
-      connectorIds: this.engine.entityStore.getAllConnectors().map((runtime) => runtime.entity.id)
+      connectorIds: this.engine.entityStore
+        .getAllConnectors()
+        .filter((runtime) => this.engine.visibility.isConnectorVisible(runtime.entity))
+        .map((runtime) => runtime.entity.id)
     });
   }
 
   get nodeCount(): number {
     return this.engine.entityStore.nodeCount;
+  }
+
+  /** 布局折叠后的可见性；文档中的隐藏内容仍可读取和复制。 */
+  isNodeVisible(id: string): boolean {
+    return this.engine.visibility.isNodeVisible(id);
+  }
+
+  /** 任一绑定端点隐藏时，连线也不参与渲染和交互。 */
+  isConnectorVisible(id: string): boolean {
+    const connector = this.getConnector(id);
+    return !!connector && this.engine.visibility.isConnectorVisible(connector);
+  }
+
+  /** 节点自身实际占据的世界外框；隐藏节点不返回可见范围。 */
+  getNodeBounds(id: string): RectBounds | undefined {
+    return this.engine.getNodeOccupiedBounds(id);
+  }
+
+  /** 布局能力注册/卸载也可能只改变可见性，无需产生文档历史。 */
+  onLayoutChange(listener: () => void): () => void {
+    return this.engine.layouts.onChange(listener);
   }
 
   getNode(id: string): Readonly<NodeEntity> | undefined {
