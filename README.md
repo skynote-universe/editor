@@ -1,8 +1,10 @@
 # @skynote/editor
 
-> A ready-to-use infinite-canvas whiteboard editor. One class assembles the [SkyNote](https://github.com/skynote-universe) kernel with sticky notes, text, shapes, frames, connectors, selection, snapping, clipboard and undo/redo; the rendering backend is pluggable (LeaferJS by default). Framework-agnostic, MIT licensed.
+> A ready-to-use infinite-canvas whiteboard editor. One class assembles the [SkyNote](https://github.com/skynote-universe) kernel with sticky notes, text, shapes, frames, connectors, selection, snapping, clipboard and undo/redo; the rendering backend is pluggable. Framework-agnostic, MIT licensed.
 
-开箱即用的无限画布白板编辑器：一个类装配好内核、基础节点与全部基础交互，渲染后端可替换 (默认 LeaferJS)。与界面框架无关，Vue、React 或原生页面都能直接使用。
+开箱即用的无限画布白板编辑器：一个类装配好内核、基础节点与全部基础交互，渲染后端通过构造参数接入，下方示例使用 LeaferJS。与界面框架无关，Vue、React 或原生页面都能直接使用。
+
+[快速开始](https://docs.skynote.top/guide/getting-started) · [API 参考](https://docs.skynote.top/api/editor) · [演练场](https://playground.skynote.top/)
 
 ## 特性
 
@@ -15,8 +17,10 @@
 
 ## 安装
 
+首个公开版本为 `0.1.0-beta.1`。通过 npm 的 `beta` 标签安装。
+
 ```bash
-npm i @skynote/editor @skynote/renderer-leafer
+npm install @skynote/editor@beta @skynote/renderer-leafer@beta
 ```
 
 ## 快速上手
@@ -140,17 +144,17 @@ editor.applyInitialView('preserve', savedViewport);
 
 ## 扩展
 
-自定义节点、连线路由器、箭头、光标和快捷键都以插件形式提供，经构造参数 `plugins` 装入。插件写法见 [@skynote/core](https://github.com/skynote-universe/core#编写插件)。
+自定义节点、连线路由器、箭头、光标和快捷键都以插件形式提供，经构造参数 `plugins` 装入。插件写法见 [插件开发指南](https://docs.skynote.top/guide/plugins)。
 
 ## 相关包
 
 | 包 | 说明 |
 | --- | --- |
-| [@skynote/core](https://github.com/skynote-universe/core) | 平台中立内核：文档模型、事务与撤销、插件协议 |
-| [@skynote/renderer-leafer](https://github.com/skynote-universe/renderer-leafer) | 基于 LeaferJS 的渲染器 |
-| [@skynote/plugins-basic](https://github.com/skynote-universe/plugins-basic) | 基础节点与交互插件 |
+| [@skynote/core](https://docs.skynote.top/api/core) | 平台中立内核：文档模型、事务与撤销、插件协议 |
+| [@skynote/renderer-leafer](https://docs.skynote.top/api/renderer-leafer) | 基于 LeaferJS 的渲染器 |
+| [@skynote/plugins-basic](https://docs.skynote.top/api/plugins-basic) | 基础节点与交互插件 |
 | **@skynote/editor** | 开箱即用的编辑器 (本包) |
-| [web](https://github.com/skynote-universe/web) | 官方示例应用 (Vue 3) |
+| [SkyNote Web](https://canvas.skynote.top/) | 官方示例应用 (Vue 3) |
 
 ## 许可证
 
