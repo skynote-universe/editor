@@ -114,6 +114,11 @@ export interface SkyNoteEditorOptions<TContainer> extends Omit<SkyNoteEngineOpti
   readOnly?: boolean;
   /** 文档打开策略，默认 actual-size；首次挂载及成功恢复、导入文档后自动应用。 */
   initialView?: InitialViewMode;
+  /**
+   * 支持四边「+」快捷添加的节点类型白名单 (nodeType 集合)。
+   * 缺省时沿用节点定义上的 `quickConnect === true` 声明；传入集合可显式覆盖（空数组表示禁用）。
+   */
+  quickConnectTypes?: Iterable<string>;
 }
 
 /** 在视口中心新建节点的请求：位置由视口决定；按已登记的节点类型逐一推导 options 的类型 */
@@ -150,7 +155,7 @@ export class SkyNoteEditor<TContainer = unknown> {
   get events(): CanvasEventHubReader {
     return this.engine.events;
   }
-  private readonly connectorTool = new ConnectorToolPlugin();
+  private readonly connectorTool: ConnectorToolPlugin;
   private readonly adapter: RenderAdapter<TContainer>;
   private renderer: CanvasRenderer | null = null;
   private imageSubscription?: () => void;
@@ -163,7 +168,15 @@ export class SkyNoteEditor<TContainer = unknown> {
   private previewSequence = 0;
 
   constructor(options: SkyNoteEditorOptions<TContainer>) {
-    const { renderer, plugins = [], readOnly = false, initialView = 'actual-size', ...engineOptions } = options;
+    const {
+      renderer,
+      plugins = [],
+      readOnly = false,
+      initialView = 'actual-size',
+      quickConnectTypes,
+      ...engineOptions
+    } = options;
+    this.connectorTool = new ConnectorToolPlugin({ quickConnectTypes });
     this.initialView = initialView;
     this.pendingInitialView = initialView;
     this.adapter = renderer;
