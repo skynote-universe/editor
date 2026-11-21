@@ -32,8 +32,11 @@ import {
   unionBounds,
   worldToScreen,
   type CanvasDocument,
+  type CanvasEventHubReader,
   type AssetTaskEvent,
   type AssetTaskResult,
+  type CreateNodeAssetTaskOptions,
+  type UpdateNodesAssetTaskOptions,
   type CanvasPatch,
   type CanvasOperationRecord,
   type CanvasRenderer,
@@ -79,6 +82,8 @@ import {
   ConnectorEditPlugin,
   ConnectorToolPlugin,
   EditingShortcutsPlugin,
+  insertImageAsset,
+  replaceImageAsset,
   type ConnectNodeRequest,
   type ConnectorDropEvent,
   SelectionOutlinePlugin,
@@ -140,6 +145,11 @@ export class SkyNoteEditor<TContainer = unknown> {
   readonly engine: SkyNoteEngine;
   /** 画布内文字编辑：界面据此显示格式工具栏并设置选区样式 */
   readonly textEditor = new TextEditPlugin();
+
+  /** 低频跨域事后通知中心：统一订阅或发布节点激活、资产任务及插件自定义事件 */
+  get events(): CanvasEventHubReader {
+    return this.engine.events;
+  }
   private readonly connectorTool = new ConnectorToolPlugin();
   private readonly adapter: RenderAdapter<TContainer>;
   private renderer: CanvasRenderer | null = null;
@@ -177,7 +187,7 @@ export class SkyNoteEditor<TContainer = unknown> {
     this.assetDisposers.push(this.onSelectionChange(() => selectionVersion++));
     this.assetDisposers.push(
       this.engine.onAssetTaskEvent((event) => {
-        if (event.phase === 'rejected' || event.task.operation === 'replace-image') return;
+        if (event.phase === 'rejected' || event.task.operation === 'update-node') return;
         if (event.phase === 'started') {
           latestInsertion = event.task.requestId;
           intents.set(event.task.requestId, selectionVersion);
@@ -821,14 +831,24 @@ export class SkyNoteEditor<TContainer = unknown> {
     return id;
   }
 
+  /** 经宿主资产适配器上传并在同一次可撤销事务中登记资产与创建节点 */
+  createNodeWithAssetTask<T extends string>(options: CreateNodeAssetTaskOptions<T>): Promise<AssetTaskResult<string>> {
+    return this.engine.createNodeWithAssetTask(options);
+  }
+
+  /** 经宿主资产适配器上传并在同一次可撤销事务中更新已有节点的资产引用 */
+  updateNodesWithAssetTask(options: UpdateNodesAssetTaskOptions): Promise<AssetTaskResult<readonly string[]>> {
+    return this.engine.updateNodesWithAssetTask(options);
+  }
+
   /** 上传并在指定世界坐标插入图片；未配置资产适配器时返回 null */
   insertImage(file: unknown, point: Point): Promise<AssetTaskResult<string>> {
-    return this.engine.insertImage(file, point);
+    return insertImageAsset(this.engine, file, point);
   }
 
   /** 替换选中图片的资产引用；保留节点尺寸、位置、样式与显示方式 */
   replaceImage(nodeIds: readonly string[], file: unknown): Promise<AssetTaskResult<readonly string[]>> {
-    return this.engine.replaceImage(nodeIds, file);
+    return replaceImageAsset(this.engine, nodeIds, file);
   }
 
   /**
